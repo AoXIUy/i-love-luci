@@ -6521,107 +6521,209 @@ function NetworkInterfaceEditor({
 										<label className="text-sm font-medium">{t("Bring up on boot")}</label>
 										<SelectField id={`network-interface-auto-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auto", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.auto} />
 									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("Default route")}</label>
-										<SelectField id={`network-interface-defaultroute-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "defaultroute", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.defaultroute} />
-									</div>
+									{editingRow.proto !== "none" && (
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Default route")}</label>
+											<SelectField id={`network-interface-defaultroute-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "defaultroute", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.defaultroute} />
+										</div>
+									)}
 									<div className="grid gap-2">
 										<label className="text-sm font-medium">{t("Disabled")}</label>
 										<SelectField id={`network-interface-disabled-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "disabled", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.disabled} />
 									</div>
 								</div>
 							</div>
-							<div className="space-y-4">
-								<h3 className="font-semibold">{t("IPv4 Settings")}</h3>
-								<div className="grid gap-4 sm:grid-cols-2">
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("IPv4 address")}</label>
-										<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ipaddr", event.target.value)} spellCheck={false} value={editingRow.ipaddr} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("Gateway")}</label>
-										<Input onChange={(event) => updateRow(editingIndex, "gateway", event.target.value)} value={editingRow.gateway} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("Netmask")}</label>
-										<Input onChange={(event) => updateRow(editingIndex, "netmask", event.target.value)} value={editingRow.netmask} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("Broadcast")}</label>
-										<Input onChange={(event) => updateRow(editingIndex, "broadcast", event.target.value)} value={editingRow.broadcast} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("Metric")}</label>
-										<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "metric", event.target.value)} value={editingRow.metric} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("Force link")}</label>
-										<SelectField id={`network-interface-force-link-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "force_link", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.force_link} />
-									</div>
-								</div>
-							</div>
-							<div className="space-y-4">
-								<h3 className="font-semibold">{t("IPv6 Settings")}</h3>
-								<div className="grid gap-4 sm:grid-cols-2">
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("IPv6 assign length")}</label>
-										<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "ip6assign", event.target.value)} value={editingRow.ip6assign} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("IPv6 hint")}</label>
-										<Input onChange={(event) => updateRow(editingIndex, "ip6hint", event.target.value)} value={editingRow.ip6hint} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("IPv6 suffix")}</label>
-										<Input onChange={(event) => updateRow(editingIndex, "ip6ifaceid", event.target.value)} value={editingRow.ip6ifaceid} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("IPv6 classes")}</label>
-										<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ip6class", event.target.value)} spellCheck={false} value={editingRow.ip6class} />
-									</div>
-									<div className="grid gap-2 sm:col-span-2">
-										<label className="text-sm font-medium">{t("IPv6 routed prefixes")}</label>
-										<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ip6prefix", event.target.value)} spellCheck={false} value={editingRow.ip6prefix} />
+							{editingRow.proto === "static" && (
+								<div className="space-y-4">
+									<h3 className="font-semibold">{t("IPv4 Settings")}</h3>
+									<div className="grid gap-4 sm:grid-cols-2">
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("IPv4 address")}</label>
+											<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ipaddr", event.target.value)} spellCheck={false} value={editingRow.ipaddr} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Gateway")}</label>
+											<Input onChange={(event) => updateRow(editingIndex, "gateway", event.target.value)} value={editingRow.gateway} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Netmask")}</label>
+											<Input onChange={(event) => updateRow(editingIndex, "netmask", event.target.value)} value={editingRow.netmask} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Broadcast")}</label>
+											<Input onChange={(event) => updateRow(editingIndex, "broadcast", event.target.value)} value={editingRow.broadcast} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Metric")}</label>
+											<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "metric", event.target.value)} value={editingRow.metric} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Force link")}</label>
+											<SelectField id={`network-interface-force-link-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "force_link", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.force_link} />
+										</div>
 									</div>
 								</div>
-							</div>
-							<div className="space-y-4">
-								<h3 className="font-semibold">{t("Advanced Settings")}</h3>
-								<div className="grid gap-4 sm:grid-cols-2">
-									<div className="grid gap-2 sm:col-span-2">
-										<label className="text-sm font-medium">{t("DNS servers")}</label>
-										<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "dns", event.target.value)} spellCheck={false} value={editingRow.dns} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("DNS weight")}</label>
-										<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "dns_metric", event.target.value)} value={editingRow.dns_metric} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("Use custom DNS (Peer DNS)")}</label>
-										<SelectField id={`network-interface-peerdns-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "peerdns", value)} options={[["1", "Yes"], ["0", "No"]]} value={editingRow.peerdns} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("Delegate IPv6 prefixes")}</label>
-										<SelectField id={`network-interface-delegate-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "delegate", value)} options={[["1", "Yes"], ["0", "No"]]} value={editingRow.delegate} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("DHCP hostname")}</label>
-										<Input onChange={(event) => updateRow(editingIndex, "hostname", event.target.value)} value={editingRow.hostname} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("DHCP client ID")}</label>
-										<Input onChange={(event) => updateRow(editingIndex, "clientid", event.target.value)} value={editingRow.clientid} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("DHCP vendor class")}</label>
-										<Input onChange={(event) => updateRow(editingIndex, "vendorid", event.target.value)} value={editingRow.vendorid} />
-									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("No release")}</label>
-										<SelectField id={`network-interface-norelease-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "norelease", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.norelease} />
+							)}
+							{["pppoe", "ppp", "pptp", "l2tp", "6in4", "6to4", "6rd", "dslite", "map", "464xlat"].includes(editingRow.proto) && (
+								<div className="space-y-4">
+									<h3 className="font-semibold">{t("PPP / Tunnel Settings")}</h3>
+									<div className="grid gap-4 sm:grid-cols-2">
+										{["pppoe", "ppp", "pptp", "l2tp"].includes(editingRow.proto) && (
+											<>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("PAP/CHAP username")}</label>
+													<Input onChange={(event) => updateRow(editingIndex, "username", event.target.value)} value={editingRow.username} />
+												</div>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("PAP/CHAP password")}</label>
+													<Input type="password" onChange={(event) => updateRow(editingIndex, "password", event.target.value)} value={editingRow.password} />
+												</div>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("Authentication")}</label>
+													<SelectField id={`network-interface-auth-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auth", value)} options={[["", "auto"], ["pap", "PAP"], ["chap", "CHAP"]]} value={editingRow.auth} />
+												</div>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("Enable IPv6 on PPP link")}</label>
+													<SelectField id={`network-interface-ipv6-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "ipv6", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.ipv6} />
+												</div>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("LCP echo failure threshold")}</label>
+													<Input onChange={(event) => updateRow(editingIndex, "keepalive", event.target.value)} placeholder={t("e.g. 5 30")} value={editingRow.keepalive} />
+												</div>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("Dial on demand (idle time)")}</label>
+													<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "demand", event.target.value)} value={editingRow.demand} />
+												</div>
+											</>
+										)}
+										{["pptp", "l2tp"].includes(editingRow.proto) && (
+											<div className="grid gap-2">
+												<label className="text-sm font-medium">{t("VPN Server")}</label>
+												<Input onChange={(event) => updateRow(editingIndex, "server", event.target.value)} value={editingRow.server} />
+											</div>
+										)}
+										{["6in4", "6to4", "6rd", "dslite", "map", "464xlat"].includes(editingRow.proto) && (
+											<>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("Local IPv6 address")}</label>
+													<Input onChange={(event) => updateRow(editingIndex, "ip6addr", event.target.value)} value={editingRow.ip6addr} />
+												</div>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("Remote IPv4/IPv6 address")}</label>
+													<Input onChange={(event) => updateRow(editingIndex, "peeraddr", event.target.value)} value={editingRow.peeraddr} />
+												</div>
+											</>
+										)}
 									</div>
 								</div>
-							</div>
+							)}
+							{["qmi", "ncm", "mbim", "wwan"].includes(editingRow.proto) && (
+								<div className="space-y-4">
+									<h3 className="font-semibold">{t("Cellular Settings")}</h3>
+									<div className="grid gap-4 sm:grid-cols-2">
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("APN")}</label>
+											<Input onChange={(event) => updateRow(editingIndex, "apn", event.target.value)} value={editingRow.apn} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("PIN")}</label>
+											<Input type="password" onChange={(event) => updateRow(editingIndex, "pincode", event.target.value)} value={editingRow.pincode} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Authentication")}</label>
+											<SelectField id={`network-interface-cellular-auth-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auth", value)} options={[["", "none"], ["pap", "PAP"], ["chap", "CHAP"], ["both", "PAP/CHAP"]]} value={editingRow.auth} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Username")}</label>
+											<Input onChange={(event) => updateRow(editingIndex, "username", event.target.value)} value={editingRow.username} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Password")}</label>
+											<Input type="password" onChange={(event) => updateRow(editingIndex, "password", event.target.value)} value={editingRow.password} />
+										</div>
+									</div>
+								</div>
+							)}
+							{(editingRow.proto === "static" || editingRow.proto === "dhcpv6") && (
+								<div className="space-y-4">
+									<h3 className="font-semibold">{t("IPv6 Settings")}</h3>
+									<div className="grid gap-4 sm:grid-cols-2">
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("IPv6 assign length")}</label>
+											<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "ip6assign", event.target.value)} value={editingRow.ip6assign} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("IPv6 hint")}</label>
+											<Input onChange={(event) => updateRow(editingIndex, "ip6hint", event.target.value)} value={editingRow.ip6hint} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("IPv6 suffix")}</label>
+											<Input onChange={(event) => updateRow(editingIndex, "ip6ifaceid", event.target.value)} value={editingRow.ip6ifaceid} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("IPv6 classes")}</label>
+											<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ip6class", event.target.value)} spellCheck={false} value={editingRow.ip6class} />
+										</div>
+										<div className="grid gap-2 sm:col-span-2">
+											<label className="text-sm font-medium">{t("IPv6 routed prefixes")}</label>
+											<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ip6prefix", event.target.value)} spellCheck={false} value={editingRow.ip6prefix} />
+										</div>
+									</div>
+								</div>
+							)}
+							{editingRow.proto !== "none" && (
+								<div className="space-y-4">
+									<h3 className="font-semibold">{t("Advanced Settings")}</h3>
+									<div className="grid gap-4 sm:grid-cols-2">
+										<div className="grid gap-2 sm:col-span-2">
+											<label className="text-sm font-medium">{t("DNS servers")}</label>
+											<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "dns", event.target.value)} spellCheck={false} value={editingRow.dns} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("DNS weight")}</label>
+											<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "dns_metric", event.target.value)} value={editingRow.dns_metric} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Use custom DNS (Peer DNS)")}</label>
+											<SelectField id={`network-interface-peerdns-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "peerdns", value)} options={[["1", "Yes"], ["0", "No"]]} value={editingRow.peerdns} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Override MAC address")}</label>
+											<Input onChange={(event) => updateRow(editingIndex, "macaddr", event.target.value)} placeholder={t("e.g. 00:11:22:33:44:55")} value={editingRow.macaddr} />
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Override MTU")}</label>
+											<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "mtu", event.target.value)} placeholder={t("e.g. 1500")} value={editingRow.mtu} />
+										</div>
+										{(editingRow.proto === "dhcpv6" || editingRow.proto === "dhcp") && (
+											<div className="grid gap-2">
+												<label className="text-sm font-medium">{t("Delegate IPv6 prefixes")}</label>
+												<SelectField id={`network-interface-delegate-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "delegate", value)} options={[["1", "Yes"], ["0", "No"]]} value={editingRow.delegate} />
+											</div>
+										)}
+										{editingRow.proto === "dhcp" && (
+											<>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("DHCP hostname")}</label>
+													<Input onChange={(event) => updateRow(editingIndex, "hostname", event.target.value)} value={editingRow.hostname} />
+												</div>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("DHCP client ID")}</label>
+													<Input onChange={(event) => updateRow(editingIndex, "clientid", event.target.value)} value={editingRow.clientid} />
+												</div>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("DHCP vendor class")}</label>
+													<Input onChange={(event) => updateRow(editingIndex, "vendorid", event.target.value)} value={editingRow.vendorid} />
+												</div>
+												<div className="grid gap-2">
+													<label className="text-sm font-medium">{t("No release")}</label>
+													<SelectField id={`network-interface-norelease-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "norelease", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.norelease} />
+												</div>
+											</>
+										)}
+									</div>
+								</div>
+							)}
 						</div>
 						<div className="sticky bottom-0 -mx-6 -mb-6 border-t bg-card px-6 py-4 flex justify-end gap-2 mt-auto shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
 							<Button type="button" variant="outline" onClick={() => setEditingIndex(null)}>{t("Done")}</Button>
@@ -7966,6 +8068,19 @@ function networkInterfaceValues(section: ConfigSection, firewallZones: ConfigSec
 		clientid: rawValue(section.values.clientid),
 		vendorid: rawValue(section.values.vendorid),
 		norelease: rawValue(section.values.norelease),
+		username: rawValue(section.values.username),
+		password: rawValue(section.values.password),
+		auth: rawValue(section.values.auth),
+		server: rawValue(section.values.server),
+		apn: rawValue(section.values.apn),
+		pincode: rawValue(section.values.pincode),
+		keepalive: rawValue(section.values.keepalive),
+		demand: rawValue(section.values.demand),
+		mtu: rawValue(section.values.mtu),
+		macaddr: rawValue(section.values.macaddr),
+		ipv6: isEnabledValue(section.values.ipv6) ? "1" : "0",
+		peeraddr: rawValue(section.values.peeraddr),
+		ip6addr: rawValue(section.values.ip6addr),
 	});
 }
 
@@ -8000,6 +8115,19 @@ function normalizeNetworkInterface(row: NetworkInterfaceConfig): NetworkInterfac
 		clientid: row.clientid ?? "",
 		vendorid: row.vendorid ?? "",
 		norelease: row.norelease === "1" || row.norelease === "0" ? row.norelease : "",
+		username: row.username ?? "",
+		password: row.password ?? "",
+		auth: row.auth ?? "",
+		server: row.server ?? "",
+		apn: row.apn ?? "",
+		pincode: row.pincode ?? "",
+		keepalive: row.keepalive ?? "",
+		demand: row.demand ?? "",
+		mtu: row.mtu ?? "",
+		macaddr: row.macaddr ?? "",
+		ipv6: row.ipv6 === "1" || row.ipv6 === "0" ? row.ipv6 : "",
+		peeraddr: row.peeraddr ?? "",
+		ip6addr: row.ip6addr ?? "",
 	};
 }
 
@@ -8034,6 +8162,19 @@ function newNetworkInterfaceRow(section: string): NetworkInterfaceConfig {
 		clientid: "",
 		vendorid: "",
 		norelease: "",
+		username: "",
+		password: "",
+		auth: "",
+		server: "",
+		apn: "",
+		pincode: "",
+		keepalive: "",
+		demand: "",
+		mtu: "",
+		macaddr: "",
+		ipv6: "",
+		peeraddr: "",
+		ip6addr: "",
 	});
 }
 

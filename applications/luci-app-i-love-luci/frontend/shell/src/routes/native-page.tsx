@@ -3230,6 +3230,7 @@ function PackageInventory({ data }: { data: NativePageData }) {
 	const [detailBusy, setDetailBusy] = useState<string | null>(null);
 	const [pendingAction, setPendingAction] = useState<PackageActionRequest | null>(null);
 	const [actionConfirmation, setActionConfirmation] = useState("");
+	const [activeTab, setActiveTab] = useState<"updates" | "installed" | "available" | "config">("updates");
 	const packages = useMemo(() => data.lines.map(parsePackageLine), [data.lines]);
 	const upgrades = useMemo(() => parsePackageUpgrades(commandOutput(data.commands, "Available upgrades")), [data.commands]);
 	const filtered = useMemo(() => {
@@ -3340,24 +3341,39 @@ function PackageInventory({ data }: { data: NativePageData }) {
 
 	return (
 		<div className="grid gap-4">
-			<div className="grid gap-3 sm:grid-cols-3">
-				<MetricBlock label={t("Installed packages")} value={packages.length} />
-				<MetricBlock label={t("LuCI packages")} value={luciCount} />
-				<MetricBlock label={t("Kernel modules")} value={kernelCount} />
+			<div className="flex w-full overflow-x-auto overflow-y-hidden rounded-lg bg-muted/50 p-1 sm:w-fit">
+				<button
+					type="button"
+					onClick={() => setActiveTab("updates")}
+					className={`whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-colors ${activeTab === "updates" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"}`}
+				>
+					{t("Updates")}
+				</button>
+				<button
+					type="button"
+					onClick={() => setActiveTab("installed")}
+					className={`whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-colors ${activeTab === "installed" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"}`}
+				>
+					{t("Installed")}
+				</button>
+				<button
+					type="button"
+					onClick={() => setActiveTab("available")}
+					className={`whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-colors ${activeTab === "available" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"}`}
+				>
+					{t("Available")}
+				</button>
+				<button
+					type="button"
+					onClick={() => setActiveTab("config")}
+					className={`whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-colors ${activeTab === "config" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"}`}
+				>
+					{t("Configuration")}
+				</button>
 			</div>
-			<PackageUpgradeTable actionBusy={actionBusy} entries={upgrades} onRunAction={runAction} />
+
 			<PackageActionOutput result={actionResult} />
 			<PackageDetailPanel detail={detailResult} />
-			<ManualPackagePlanner busy={actionBusy} onRunAction={runAction} />
-			<Panel title={t("Package action options")}>
-				<label className="inline-flex items-center gap-2 text-sm">
-					<input checked={removeAutoremove} onChange={(event) => setRemoveAutoremove(event.target.checked)} type="checkbox" />
-					{t("Automatically remove unused dependencies when removing packages")}
-				</label>
-			</Panel>
-			<AvailablePackageTable busy={actionBusy} detailBusy={detailBusy} lines={data.packageAvailable ?? []} onRunAction={runAction} onShowDetail={showPackageDetail} />
-			<AvailablePackageSearch busy={actionBusy} detailBusy={detailBusy} onRunAction={runAction} onShowDetail={showPackageDetail} />
-			<PackageFeedsEditor feeds={data.packageFeeds ?? []} />
 			<PackageMutationConfirmDialog
 				busy={Boolean(actionBusy)}
 				confirmation={actionConfirmation}
@@ -3369,7 +3385,41 @@ function PackageInventory({ data }: { data: NativePageData }) {
 				onConfirm={() => void confirmPendingAction()}
 				onConfirmationChange={setActionConfirmation}
 			/>
-			<Panel
+
+			{activeTab === "updates" && (
+				<div className="grid gap-4 animate-in fade-in">
+					<div className="grid gap-3 sm:grid-cols-3">
+						<MetricBlock label={t("Installed packages")} value={packages.length} />
+						<MetricBlock label={t("LuCI packages")} value={luciCount} />
+						<MetricBlock label={t("Kernel modules")} value={kernelCount} />
+					</div>
+					<PackageUpgradeTable actionBusy={actionBusy} entries={upgrades} onRunAction={runAction} />
+				</div>
+			)}
+
+			{activeTab === "available" && (
+				<div className="grid gap-4 animate-in fade-in">
+					<ManualPackagePlanner busy={actionBusy} onRunAction={runAction} />
+					<AvailablePackageSearch busy={actionBusy} detailBusy={detailBusy} onRunAction={runAction} onShowDetail={showPackageDetail} />
+					<AvailablePackageTable busy={actionBusy} detailBusy={detailBusy} lines={data.packageAvailable ?? []} onRunAction={runAction} onShowDetail={showPackageDetail} />
+				</div>
+			)}
+
+			{activeTab === "config" && (
+				<div className="grid gap-4 animate-in fade-in">
+					<PackageFeedsEditor feeds={data.packageFeeds ?? []} />
+				</div>
+			)}
+
+			{activeTab === "installed" && (
+				<div className="grid gap-4 animate-in fade-in">
+					<Panel title={t("Package action options")}>
+						<label className="inline-flex items-center gap-2 text-sm">
+							<input checked={removeAutoremove} onChange={(event) => setRemoveAutoremove(event.target.checked)} type="checkbox" />
+							{t("Automatically remove unused dependencies when removing packages")}
+						</label>
+					</Panel>
+					<Panel
 				title={
 					<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<div className="flex items-center gap-2">
@@ -3463,6 +3513,8 @@ function PackageInventory({ data }: { data: NativePageData }) {
 					</table>
 				</div>
 			</Panel>
+				</div>
+			)}
 		</div>
 	);
 }

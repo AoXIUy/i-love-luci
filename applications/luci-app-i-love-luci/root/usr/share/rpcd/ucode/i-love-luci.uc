@@ -2830,7 +2830,20 @@ function save_network_interfaces(rows) {
 			hostname: dhcp_clean_value(row?.hostname || ''),
 			clientid: dhcp_clean_value(row?.clientid || ''),
 			vendorid: dhcp_clean_value(row?.vendorid || ''),
-			norelease: dhcp_optional_zero_one(row?.norelease)
+			norelease: dhcp_optional_zero_one(row?.norelease),
+			username: dhcp_clean_value(row?.username || ''),
+			password: dhcp_clean_value(row?.password || ''),
+			auth: dhcp_clean_value(row?.auth || ''),
+			server: dhcp_clean_value(row?.server || ''),
+			apn: dhcp_clean_value(row?.apn || ''),
+			pincode: dhcp_clean_value(row?.pincode || ''),
+			keepalive: dhcp_clean_value(row?.keepalive || ''),
+			demand: dhcp_clean_value(row?.demand || ''),
+			mtu: dhcp_clean_value(row?.mtu || ''),
+			macaddr: dhcp_clean_value(row?.macaddr || ''),
+			ipv6: dhcp_optional_zero_one(row?.ipv6),
+			peeraddr: dhcp_clean_value(row?.peeraddr || ''),
+			ip6addr: dhcp_clean_value(row?.ip6addr || '')
 		};
 
 		if (!valid_network_route_interface(next.proto))

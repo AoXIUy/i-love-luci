@@ -1237,6 +1237,19 @@ export type NetworkInterfaceConfig = {
 	clientid: string;
 	vendorid: string;
 	norelease: string;
+	username?: string;
+	password?: string;
+	auth?: string;
+	server?: string;
+	apn?: string;
+	pincode?: string;
+	keepalive?: string;
+	demand?: string;
+	mtu?: string;
+	macaddr?: string;
+	ipv6?: string;
+	peeraddr?: string;
+	ip6addr?: string;
 };
 
 export type NetworkInterfacesResult = {
