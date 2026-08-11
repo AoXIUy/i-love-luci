@@ -6580,11 +6580,11 @@ function NetworkInterfaceEditor({
 												</div>
 												<div className="grid gap-2">
 													<label className="text-sm font-medium">{t("Authentication")}</label>
-													<SelectField id={`network-interface-auth-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auth", value)} options={[["", "auto"], ["pap", "PAP"], ["chap", "CHAP"]]} value={editingRow.auth} />
+													<SelectField id={`network-interface-auth-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auth", value)} options={[["", "auto"], ["pap", "PAP"], ["chap", "CHAP"]]} value={editingRow.auth ?? ""} />
 												</div>
 												<div className="grid gap-2">
 													<label className="text-sm font-medium">{t("Enable IPv6 on PPP link")}</label>
-													<SelectField id={`network-interface-ipv6-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "ipv6", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.ipv6} />
+													<SelectField id={`network-interface-ipv6-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "ipv6", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.ipv6 ?? ""} />
 												</div>
 												<div className="grid gap-2">
 													<label className="text-sm font-medium">{t("LCP echo failure threshold")}</label>
@@ -6631,7 +6631,7 @@ function NetworkInterfaceEditor({
 										</div>
 										<div className="grid gap-2">
 											<label className="text-sm font-medium">{t("Authentication")}</label>
-											<SelectField id={`network-interface-cellular-auth-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auth", value)} options={[["", "none"], ["pap", "PAP"], ["chap", "CHAP"], ["both", "PAP/CHAP"]]} value={editingRow.auth} />
+											<SelectField id={`network-interface-cellular-auth-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auth", value)} options={[["", "none"], ["pap", "PAP"], ["chap", "CHAP"], ["both", "PAP/CHAP"]]} value={editingRow.auth ?? ""} />
 										</div>
 										<div className="grid gap-2">
 											<label className="text-sm font-medium">{t("Username")}</label>
