@@ -139,18 +139,28 @@ const dict: Record<string, string> = {
 };
 
 export function getLanguagePreference(): "zh" | "en" {
-	if (typeof window === "undefined") return "zh";
-	const stored = window.localStorage.getItem("i-love-luci.lang");
-	if (stored === "zh" || stored === "en") return stored;
-	
-	// 默认根据浏览器首选语言自动选择
-	const navLang = navigator.language.toLowerCase();
-	return navLang.startsWith("zh") ? "zh" : "en";
+	if (typeof window === "undefined") return "en";
+	try {
+		const stored = window.localStorage?.getItem("i-love-luci.lang");
+		if (stored === "zh" || stored === "en") return stored;
+
+		if (typeof navigator !== "undefined" && navigator.language) {
+			const navLang = navigator.language.toLowerCase();
+			if (navLang.startsWith("zh")) return "zh";
+		}
+	} catch {
+		// 忽略 SSR 或浏览器隐私模式导致的 localStorage 报错
+	}
+	return "en";
 }
 
 export function setLanguagePreference(lang: "zh" | "en") {
 	if (typeof window === "undefined") return;
-	window.localStorage.setItem("i-love-luci.lang", lang);
+	try {
+		window.localStorage?.setItem("i-love-luci.lang", lang);
+	} catch {
+		// 忽略写入异常
+	}
 }
 
 export function t(text: string): string {
