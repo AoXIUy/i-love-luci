@@ -209,6 +209,8 @@ jobs:
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
+        with:
+          enablement: true
 
       - name: Download package feed artifacts
         uses: actions/download-artifact@v8
