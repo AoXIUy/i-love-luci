@@ -149,7 +149,50 @@ const dict: Record<string, string> = {
 	"Source": "数据源",
 	"Polls every": "刷新间隔",
 	"Collecting thermal data...": "正在采集温度数据...",
-	"Collecting disk I/O data...": "正在采集磁盘 I/O 数据..."
+	"Collecting disk I/O data...": "正在采集磁盘 I/O 数据...",
+
+	// Network Interfaces
+	"Active summary": "接口活动摘要",
+	"WAN-like, default-route, and currently up interfaces shown first.": "优先展示 WAN 口、默认路由与处于连接状态的接口。",
+	"interfaces": "个接口",
+	"default route": "默认路由",
+	"WAN-like": "WAN 接口",
+	"dynamic": "动态分配",
+	"unavailable": "暂不可用",
+	"Addresses": "IP 地址",
+	"DNS": "DNS 服务器",
+	"No live interface status reported. UCI interface configuration is still listed below.": "未报告实时的接口状态，下方的 UCI 配置仍可正常编辑。",
+	"Interface status": "接口状态列表",
+	"Configuration": "配置小节",
+	"sections": "个小节",
+
+	// Package Manager
+	"Installed packages": "已安装软件包",
+	"Available packages": "可用软件包",
+	"Updates": "可更新包",
+	"LuCI packages": "LuCI 界面包",
+	"Filter packages": "过滤已安装软件包...",
+	"Filter available packages": "过滤可用软件包...",
+	"Update lists": "更新包列表",
+	"Updating package lists...": "正在更新软件包列表...",
+	"Package list updated": "软件包列表已更新",
+	"All packages": "全部软件包",
+	"Package relations": "软件包关联关系",
+	"Translation packages": "语言汉化包",
+
+	// Backup / Flash Firmware
+	"Backup / flash firmware": "备份与固件刷写",
+	"Download backup": "生成并下载备份",
+	"Generate archive": "生成备份归档",
+	"Restore backup": "上传恢复配置",
+	"Upload archive": "上传归档文件",
+	"Perform reset": "恢复出厂设置",
+	"Flash new firmware image": "刷写新固件镜像",
+	"Keep settings": "保留现有系统配置",
+	"Force upgrade": "强制刷写 (忽略校验警告)",
+	"Flash partitions": "闪存分区表 (MTD)",
+	"Flash and reboot": "确认刷机并重启",
+	"No MTD flash partitions exposed by this target.": "当前目标平台未暴露 MTD 闪存分区。"
 };
 
 export function getLanguagePreference(): "zh" | "en" {

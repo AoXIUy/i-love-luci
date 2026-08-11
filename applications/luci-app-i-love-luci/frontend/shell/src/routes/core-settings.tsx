@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { t } from "@/lib/i18n";
 import {
 	getCoreSettings,
 	getDashboardStatus,
@@ -6228,10 +6229,10 @@ function NetworkInterfacesSummary({ dashboard, settings }: { dashboard: Dashboar
 			<section className="grid gap-3">
 				<div className="flex items-center justify-between gap-3">
 					<div>
-						<h2 className="text-base font-semibold">Active summary</h2>
-						<p className="text-sm text-muted-foreground">WAN-like, default-route, and currently up interfaces shown first.</p>
+						<h2 className="text-base font-semibold">{t("Active summary")}</h2>
+						<p className="text-sm text-muted-foreground">{t("WAN-like, default-route, and currently up interfaces shown first.")}</p>
 					</div>
-					<span className="text-xs text-muted-foreground">{interfaces.length || configInterfaces.length} interfaces</span>
+					<span className="text-xs text-muted-foreground">{interfaces.length || configInterfaces.length} {t("interfaces")}</span>
 				</div>
 				{summaryInterfaces.length ? (
 					<div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -6241,7 +6242,7 @@ function NetworkInterfacesSummary({ dashboard, settings }: { dashboard: Dashboar
 					</div>
 				) : (
 					<div className="rounded-md border bg-card p-4 text-sm text-muted-foreground">
-						No live interface status reported. UCI interface configuration is still listed below.
+						{t("No live interface status reported. UCI interface configuration is still listed below.")}
 					</div>
 				)}
 			</section>
@@ -6275,15 +6276,15 @@ function InterfaceSummaryCard({
 				<Badge className={state.active ? "text-primary" : ""}>{state.label}</Badge>
 			</div>
 			<div className="flex flex-wrap gap-2">
-				{hasDefaultRoute(iface) ? <Badge>default route</Badge> : null}
-				{isWanLikeInterface(iface) ? <Badge>WAN-like</Badge> : null}
-				{iface.dynamic ? <Badge>dynamic</Badge> : null}
-				{iface.available === false ? <Badge>unavailable</Badge> : null}
+				{hasDefaultRoute(iface) ? <Badge>{t("default route")}</Badge> : null}
+				{isWanLikeInterface(iface) ? <Badge>{t("WAN-like")}</Badge> : null}
+				{iface.dynamic ? <Badge>{t("dynamic")}</Badge> : null}
+				{iface.available === false ? <Badge>{t("unavailable")}</Badge> : null}
 			</div>
 			<div className="grid gap-2 text-xs">
-				<InterfaceSummaryLine label="Uptime" value={formatUptime(iface.uptime)} />
-				<InterfaceSummaryList label="Addresses" values={addresses} />
-				<InterfaceSummaryList label="DNS" values={dnsServers} />
+				<InterfaceSummaryLine label={t("Uptime")} value={formatUptime(iface.uptime)} />
+				<InterfaceSummaryList label={t("Addresses")} values={addresses} />
+				<InterfaceSummaryList label={t("DNS")} values={dnsServers} />
 			</div>
 		</div>
 	);

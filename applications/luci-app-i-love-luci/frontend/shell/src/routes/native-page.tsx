@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { t } from "@/lib/i18n";
 import { legacyTarget, nativePageCompatPath, serviceCompatPath } from "@/lib/service-compat";
 import {
 	applyFactoryReset,
@@ -3338,20 +3339,21 @@ function PackageInventory({ data }: { data: NativePageData }) {
 	}
 
 	return (
+	return (
 		<div className="grid gap-4">
 			<div className="grid gap-3 sm:grid-cols-3">
-				<MetricBlock label="Installed packages" value={packages.length} />
-				<MetricBlock label="LuCI packages" value={luciCount} />
-				<MetricBlock label="Kernel modules" value={kernelCount} />
+				<MetricBlock label={t("Installed packages")} value={packages.length} />
+				<MetricBlock label={t("LuCI packages")} value={luciCount} />
+				<MetricBlock label={t("Kernel modules")} value={kernelCount} />
 			</div>
 			<PackageUpgradeTable actionBusy={actionBusy} entries={upgrades} onRunAction={runAction} />
 			<PackageActionOutput result={actionResult} />
 			<PackageDetailPanel detail={detailResult} />
 			<ManualPackagePlanner busy={actionBusy} onRunAction={runAction} />
-			<Panel title="Package action options">
+			<Panel title={t("Package action options")}>
 				<label className="inline-flex items-center gap-2 text-sm">
 					<input checked={removeAutoremove} onChange={(event) => setRemoveAutoremove(event.target.checked)} type="checkbox" />
-					Automatically remove unused dependencies when removing packages
+					{t("Automatically remove unused dependencies when removing packages")}
 				</label>
 			</Panel>
 			<AvailablePackageTable busy={actionBusy} detailBusy={detailBusy} lines={data.packageAvailable ?? []} onRunAction={runAction} onShowDetail={showPackageDetail} />
@@ -3372,9 +3374,9 @@ function PackageInventory({ data }: { data: NativePageData }) {
 				title={
 					<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<div className="flex items-center gap-2">
-							<span>Installed packages</span>
+							<span>{t("Installed packages")}</span>
 							<Button disabled={actionBusy === "update::apply"} onClick={() => void runAction("update", "", false)} size="sm" type="button" variant="outline">
-								Update index
+								{t("Update index")}
 							</Button>
 						</div>
 						<div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
@@ -3383,15 +3385,15 @@ function PackageInventory({ data }: { data: NativePageData }) {
 								onChange={(event) => setInstalledTranslationMode(event.target.value as "all" | "hide" | "only")}
 								value={installedTranslationMode}
 							>
-								<option value="all">All packages</option>
-								<option value="hide">Hide translations</option>
-								<option value="only">Only translations</option>
+								<option value="all">{t("All packages")}</option>
+								<option value="hide">{t("Hide translations")}</option>
+								<option value="only">{t("Only translations")}</option>
 							</select>
 							<div className="relative w-full sm:w-72">
 								<Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
 								<Input
 									className="pl-9"
-									placeholder="Filter packages"
+									placeholder={t("Filter packages")}
 									value={query}
 									onChange={(event) => setQuery(event.target.value)}
 								/>
@@ -3405,10 +3407,10 @@ function PackageInventory({ data }: { data: NativePageData }) {
 					<table className="w-full min-w-[58rem] text-left text-sm">
 						<thead className="border-b text-xs uppercase text-muted-foreground">
 							<tr>
-								<th className="px-3 py-2 font-medium">Package</th>
-								<th className="px-3 py-2 font-medium">Version</th>
-								<th className="px-3 py-2 font-medium">Description</th>
-								<th className="px-3 py-2 font-medium">Actions</th>
+								<th className="px-3 py-2 font-medium">{t("Package")}</th>
+								<th className="px-3 py-2 font-medium">{t("Version")}</th>
+								<th className="px-3 py-2 font-medium">{t("Description")}</th>
+								<th className="px-3 py-2 font-medium">{t("Actions")}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -5828,15 +5830,15 @@ function FlashSummary({ data }: { data: NativePageData }) {
 					Create an authenticated sysupgrade configuration archive for this router.
 				</p>
 			</Panel>
-			<Panel title="Restore and reset">
+			<Panel title={t("Restore and reset")}>
 				<div className="grid gap-4 md:grid-cols-2">
 					<div className="grid gap-2 text-sm">
-						<div className="font-medium">Restore backup archive</div>
+						<div className="font-medium">{t("Restore backup archive")}</div>
 						<Input accept=".gz,.tgz,.tar.gz" disabled={restoreChecking || restoreApplying} onChange={(event) => void selectRestoreArchive(event.target.files?.[0])} type="file" />
-						<div className="text-xs text-muted-foreground">Archive is validated before restore. Restore reboots the router.</div>
+						<div className="text-xs text-muted-foreground">{t("Archive is validated before restore. Restore reboots the router.")}</div>
 					</div>
 					<div className="grid gap-2 text-sm">
-						<div className="font-medium">Factory reset</div>
+						<div className="font-medium">{t("Factory reset")}</div>
 						<Input
 							disabled={!hasRootfsData || resetting}
 							onChange={(event) => setResetConfirm(event.target.value)}
@@ -5849,19 +5851,19 @@ function FlashSummary({ data }: { data: NativePageData }) {
 							type="button"
 							variant="destructive"
 						>
-							Factory reset
+							{t("Factory reset")}
 						</Button>
 						<div className="text-xs text-muted-foreground">
-							{hasRootfsData ? "Erases configuration and reboots." : "Factory reset is unavailable on this target."}
+							{hasRootfsData ? t("Erases configuration and reboots.") : t("Factory reset is unavailable on this target.")}
 						</div>
 					</div>
 				</div>
 			</Panel>
-			<Panel title="Firmware image">
+			<Panel title={t("Firmware image")}>
 				<div className="grid gap-2 text-sm">
 					<Input accept=".bin,.img,.itb,.trx,.tar,.gz" disabled={!backup?.available || firmwareChecking || firmwareFlashing} onChange={(event) => void selectFirmwareImage(event.target.files?.[0])} type="file" />
 					<div className="text-xs text-muted-foreground">
-						Image is staged under /tmp and checked with sysupgrade before flashing. Upload limit is {formatBytes(nativeFirmwareUploadLimit)}; use the full firmware workflow for larger images.
+						{t("Image is staged under /tmp and checked with sysupgrade before flashing.")} ({t("Upload limit is")} {formatBytes(nativeFirmwareUploadLimit)})
 					</div>
 				</div>
 			</Panel>
