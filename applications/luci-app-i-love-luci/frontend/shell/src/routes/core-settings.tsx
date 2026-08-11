@@ -1,10 +1,11 @@
-import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Drawer } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { t } from "@/lib/i18n";
 import {
@@ -6148,7 +6149,7 @@ function NetworkSummary({
 	}
 
 	return (
-		<div className="grid gap-5">
+		<div className="grid gap-8">
 			{configInterfaces.length ? (
 				<NetworkInterfaceEditor
 					firewallZones={firewallZones}
@@ -6183,7 +6184,6 @@ function NetworkSummary({
 					}
 				/>
 			) : null}
-			{interfaces.length ? <InterfaceStatusTable interfaces={interfaces} /> : null}
 			{devices.length ? <DeviceStatusTable devices={devices} /> : null}
 			<StaticRouteEditor
 				onSaved={(nextRoutes, sections) =>
@@ -6217,7 +6217,7 @@ function NetworkInterfacesSummary({ dashboard, settings }: { dashboard: Dashboar
 	const configInterfaces = settings.network.filter((section) => section.type === "interface");
 
 	return (
-		<div className="grid gap-5">
+		<div className="grid gap-8">
 			<section className="grid gap-3">
 				<div className="flex items-center justify-between gap-3">
 					<div>
@@ -6238,7 +6238,6 @@ function NetworkInterfacesSummary({ dashboard, settings }: { dashboard: Dashboar
 					</div>
 				)}
 			</section>
-			{interfaces.length ? <InterfaceStatusTable devices={devices} interfaces={interfaces} /> : null}
 		</div>
 	);
 }
@@ -6348,6 +6347,294 @@ function NetworkRoutesSummary({
 }
 
 function NetworkInterfaceEditor({
+	firewallZones,
+	interfaces,
+	onSaved,
+}: {
+	firewallZones: ConfigSection[];
+	interfaces: ConfigSection[];
+	onSaved: (sections: ConfigSection[], firewallSections?: ConfigSection[]) => void;
+}) {
+	const [rows, setRows] = useState(() => interfaces.map((section) => networkInterfaceValues(section, firewallZones)));
+	const [savedRows, setSavedRows] = useState(rows);
+	const [saving, setSaving] = useState(false);
+	const [editingIndex, setEditingIndex] = useState<number | null>(null);
+
+	const dirty = JSON.stringify(rows) !== JSON.stringify(savedRows);
+	const visibleRows = rows
+		.map((row, index) => ({ row, index }))
+		.filter(({ row }) => row.remove !== "1");
+	const firewallZoneOptions = useMemo<[string, string][]>(
+		() => [
+			["", "Unspecified"],
+			...firewallZones.map((zone) => {
+				const name = rawValue(zone.values.name || zone.name);
+				return [name, name] as [string, string];
+			}),
+			["__custom", "Create new..."],
+		],
+		[firewallZones],
+	);
+
+	function updateRow(index: number, field: keyof NetworkInterfaceConfig, value: string) {
+		setRows((current) =>
+			current.map((row, rowIndex) =>
+				rowIndex === index
+					? {
+							...row,
+							[field]: value,
+						}
+					: row,
+			),
+		);
+	}
+
+	function addRow() {
+		const newName = uniqueNetworkInterfaceName(rows);
+		setRows((current) => [...current, newNetworkInterfaceRow(newName)]);
+		setEditingIndex(rows.length);
+	}
+
+	function removeRow(index: number) {
+		setRows((current) => {
+			const row = current[index];
+			if (!row || row.isNew === "1") {
+				return current.filter((_, rowIndex) => rowIndex !== index);
+			}
+			return current.map((item, rowIndex) => (rowIndex === index ? { ...item, remove: "1" } : item));
+		});
+		if (editingIndex === index) {
+			setEditingIndex(null);
+		}
+	}
+
+	async function submit(event: FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) {
+		if (event && "preventDefault" in event) {
+			event.preventDefault();
+		}
+		setSaving(true);
+		const result = await saveNetworkInterfaces(rows);
+		setSaving(false);
+
+		if (!result.saved) {
+			toast.error(result.message);
+			return;
+		}
+
+		const nextRows = result.interfaces.map(normalizeNetworkInterface);
+		toast.success(result.message);
+		setRows(nextRows);
+		setSavedRows(nextRows);
+		onSaved(result.sections, result.firewallSections);
+	}
+
+	const editingRow = editingIndex !== null ? rows[editingIndex] : null;
+
+	return (
+		<section className="grid gap-3">
+			<div className="flex items-center justify-between gap-3">
+				<div>
+					<h2 className="text-base font-semibold">{t("Interface configuration")}</h2>
+					<p className="text-sm text-muted-foreground">{t("Edit common UCI interface fields while preserving advanced options.")}</p>
+				</div>
+				<div className="flex items-center gap-2">
+					<span className="text-xs text-muted-foreground">{visibleRows.length} {t("interfaces")}</span>
+					<Button onClick={addRow} size="sm" type="button" variant="outline">
+						<Plus className="size-4" />
+						{t("Add interface")}
+					</Button>
+				</div>
+			</div>
+			<div className="overflow-x-auto rounded-md border bg-card shadow-sm">
+				<table className="w-full text-left text-sm">
+					<thead className="border-b text-xs uppercase text-muted-foreground">
+						<tr>
+							<th className="px-3 py-2 font-medium">{t("Interface")}</th>
+							<th className="px-3 py-2 font-medium">{t("Protocol")}</th>
+							<th className="px-3 py-2 font-medium">{t("Device")}</th>
+							<th className="px-3 py-2 font-medium">{t("Firewall zone")}</th>
+							<th className="px-3 py-2 font-medium text-right">{t("Actions")}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{visibleRows.map(({ row, index }) => (
+							<tr className="border-b align-top last:border-0 hover:bg-muted/30" key={`network-interface-${index}`}>
+								<td className="px-3 py-3 font-medium">{row.isNew === "1" ? row.section + " (New)" : row.section}</td>
+								<td className="px-3 py-3 text-muted-foreground">{row.proto || t("none")}</td>
+								<td className="px-3 py-3 text-muted-foreground">{row.device || t("none")}</td>
+								<td className="px-3 py-3 text-muted-foreground">{row.zone === "__custom" ? row.zoneName : (row.zone || t("unspecified"))}</td>
+								<td className="px-3 py-3 text-right">
+									<div className="flex justify-end gap-1">
+										<Button aria-label={`Edit ${row.section}`} onClick={() => setEditingIndex(index)} size="icon" type="button" variant="ghost">
+											<Pencil className="size-4" />
+										</Button>
+										<Button aria-label={`Remove ${row.section}`} disabled={row.section === "loopback"} onClick={() => removeRow(index)} size="icon" type="button" variant="ghost" className="text-destructive">
+											<Trash2 className="size-4" />
+										</Button>
+									</div>
+								</td>
+							</tr>
+						))}
+						{visibleRows.length === 0 && (
+							<tr>
+								<td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">{t("No interfaces configured.")}</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</div>
+			<div className="flex justify-end gap-2">
+				<Button disabled={!dirty || saving} onClick={() => setRows(savedRows)} type="button" variant="outline">{t("Cancel")}</Button>
+				<Button disabled={!dirty || saving} onClick={submit} type="button">{t("Save")}</Button>
+			</div>
+			<Drawer open={editingIndex !== null} onOpenChange={(open) => !open && setEditingIndex(null)} title={editingRow ? `${t("Edit")} ${editingRow.section}` : t("Edit Interface")}>
+				{editingIndex !== null && editingRow && (
+					<form className="flex h-full flex-col" onSubmit={submit}>
+						<div className="flex-1 space-y-8 pb-8">
+							<div className="space-y-4">
+								<h3 className="font-semibold">{t("General Settings")}</h3>
+								<div className="grid gap-4 sm:grid-cols-2">
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Interface Name")}</label>
+										{editingRow.isNew === "1" ? (
+											<Input onChange={(event) => updateRow(editingIndex, "section", event.target.value)} value={editingRow.section} />
+										) : (
+											<Input value={editingRow.section} disabled />
+										)}
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Protocol")}</label>
+										<NetworkProtocolField id={`network-interface-proto-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "proto", value)} value={editingRow.proto} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Device")}</label>
+										<Input onChange={(event) => updateRow(editingIndex, "device", event.target.value)} value={editingRow.device} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Firewall Zone")}</label>
+										<div className="grid gap-2">
+											<SelectField id={`network-interface-zone-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "zone", value)} options={firewallZoneOptions} value={editingRow.zone ?? ""} />
+											{editingRow.zone === "__custom" ? <Input onChange={(event) => updateRow(editingIndex, "zoneName", event.target.value)} placeholder={t("zone name")} value={editingRow.zoneName ?? ""} /> : null}
+										</div>
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Bring up on boot")}</label>
+										<SelectField id={`network-interface-auto-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auto", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.auto} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Default route")}</label>
+										<SelectField id={`network-interface-defaultroute-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "defaultroute", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.defaultroute} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Disabled")}</label>
+										<SelectField id={`network-interface-disabled-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "disabled", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.disabled} />
+									</div>
+								</div>
+							</div>
+							<div className="space-y-4">
+								<h3 className="font-semibold">{t("IPv4 Settings")}</h3>
+								<div className="grid gap-4 sm:grid-cols-2">
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("IPv4 address")}</label>
+										<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ipaddr", event.target.value)} spellCheck={false} value={editingRow.ipaddr} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Gateway")}</label>
+										<Input onChange={(event) => updateRow(editingIndex, "gateway", event.target.value)} value={editingRow.gateway} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Netmask")}</label>
+										<Input onChange={(event) => updateRow(editingIndex, "netmask", event.target.value)} value={editingRow.netmask} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Broadcast")}</label>
+										<Input onChange={(event) => updateRow(editingIndex, "broadcast", event.target.value)} value={editingRow.broadcast} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Metric")}</label>
+										<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "metric", event.target.value)} value={editingRow.metric} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Force link")}</label>
+										<SelectField id={`network-interface-force-link-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "force_link", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.force_link} />
+									</div>
+								</div>
+							</div>
+							<div className="space-y-4">
+								<h3 className="font-semibold">{t("IPv6 Settings")}</h3>
+								<div className="grid gap-4 sm:grid-cols-2">
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("IPv6 assign length")}</label>
+										<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "ip6assign", event.target.value)} value={editingRow.ip6assign} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("IPv6 hint")}</label>
+										<Input onChange={(event) => updateRow(editingIndex, "ip6hint", event.target.value)} value={editingRow.ip6hint} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("IPv6 suffix")}</label>
+										<Input onChange={(event) => updateRow(editingIndex, "ip6ifaceid", event.target.value)} value={editingRow.ip6ifaceid} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("IPv6 classes")}</label>
+										<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ip6class", event.target.value)} spellCheck={false} value={editingRow.ip6class} />
+									</div>
+									<div className="grid gap-2 sm:col-span-2">
+										<label className="text-sm font-medium">{t("IPv6 routed prefixes")}</label>
+										<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ip6prefix", event.target.value)} spellCheck={false} value={editingRow.ip6prefix} />
+									</div>
+								</div>
+							</div>
+							<div className="space-y-4">
+								<h3 className="font-semibold">{t("Advanced Settings")}</h3>
+								<div className="grid gap-4 sm:grid-cols-2">
+									<div className="grid gap-2 sm:col-span-2">
+										<label className="text-sm font-medium">{t("DNS servers")}</label>
+										<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "dns", event.target.value)} spellCheck={false} value={editingRow.dns} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("DNS weight")}</label>
+										<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "dns_metric", event.target.value)} value={editingRow.dns_metric} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Use custom DNS (Peer DNS)")}</label>
+										<SelectField id={`network-interface-peerdns-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "peerdns", value)} options={[["1", "Yes"], ["0", "No"]]} value={editingRow.peerdns} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Delegate IPv6 prefixes")}</label>
+										<SelectField id={`network-interface-delegate-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "delegate", value)} options={[["1", "Yes"], ["0", "No"]]} value={editingRow.delegate} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("DHCP hostname")}</label>
+										<Input onChange={(event) => updateRow(editingIndex, "hostname", event.target.value)} value={editingRow.hostname} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("DHCP client ID")}</label>
+										<Input onChange={(event) => updateRow(editingIndex, "clientid", event.target.value)} value={editingRow.clientid} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("DHCP vendor class")}</label>
+										<Input onChange={(event) => updateRow(editingIndex, "vendorid", event.target.value)} value={editingRow.vendorid} />
+									</div>
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("No release")}</label>
+										<SelectField id={`network-interface-norelease-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "norelease", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.norelease} />
+									</div>
+								</div>
+							</div>
+						</div>
+						<div className="sticky bottom-0 -mx-6 -mb-6 border-t bg-card px-6 py-4 flex justify-end gap-2 mt-auto shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+							<Button type="button" variant="outline" onClick={() => setEditingIndex(null)}>{t("Done")}</Button>
+							<Button disabled={saving} type="submit">{t("Apply & Save All")}</Button>
+						</div>
+					</form>
+				)}
+			</Drawer>
+		</section>
+	);
+}
+
+function OldNetworkInterfaceEditor({
 	firewallZones,
 	interfaces,
 	onSaved,
