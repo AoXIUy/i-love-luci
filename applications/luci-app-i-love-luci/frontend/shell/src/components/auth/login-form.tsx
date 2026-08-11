@@ -30,7 +30,7 @@ export function LoginForm() {
 		<Card className="w-full max-w-sm shadow-sm">
 			<CardContent className="p-6">
 				<div className="mb-6 flex flex-col gap-2">
-					<img src="/logo.png" alt="JT-COM Logo" className="h-10 w-auto object-contain self-start dark:brightness-110" />
+					<img src={`${import.meta.env.BASE_URL}logo.png`} alt="JT-COM Logo" className="h-10 w-auto object-contain self-start dark:brightness-110" />
 					<p className="text-xs text-muted-foreground">Router administration</p>
 				</div>
 

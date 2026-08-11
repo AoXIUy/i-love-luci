@@ -285,7 +285,7 @@ export function Sidebar({ desktopOpen, open, onClose }: SidebarProps) {
 				>
 					<div className="mb-2 flex shrink-0 items-center justify-between px-2">
 						<Link className="flex items-center" to="/" onClick={onClose}>
-							<img src="/logo.png" alt="JT-COM Logo" className="h-6 w-auto object-contain dark:brightness-110" />
+							<img src={`${import.meta.env.BASE_URL}logo.png`} alt="JT-COM Logo" className="h-6 w-auto object-contain dark:brightness-110" />
 						</Link>
 						<Button size="icon" variant="ghost" aria-label="Close navigation" onClick={onClose} tabIndex={open ? 0 : -1}>
 							<X className="size-5" />

@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-i-love-luci
-PKG_VERSION:=1.0.0
-PKG_RELEASE:=10
+PKG_VERSION:=1.0.1
+PKG_RELEASE:=1
 
 LUCI_TITLE:=I Love LuCI modern application shell
 LUCI_DEPENDS:=+luci-base +rpcd-mod-ucode +i-love-luci-console +luci-theme-i-love-luci

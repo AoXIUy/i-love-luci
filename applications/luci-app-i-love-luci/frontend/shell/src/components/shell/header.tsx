@@ -89,7 +89,7 @@ export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
 				<Menu className="size-5" />
 			</Button>
 			<Link className="hidden items-center sm:flex" to="/">
-				<img src="/logo.png" alt="JT-COM Logo" className="h-8 w-auto object-contain dark:brightness-110" />
+				<img src={`${import.meta.env.BASE_URL}logo.png`} alt="JT-COM Logo" className="h-8 w-auto object-contain dark:brightness-110" />
 			</Link>
 			<div className="min-w-0 flex-1 sm:mx-auto sm:max-w-xl">
 				<HeaderSearch />

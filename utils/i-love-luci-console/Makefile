@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=i-love-luci-console
-PKG_VERSION:=1.0.0
-PKG_RELEASE:=10
+PKG_VERSION:=1.0.1
+PKG_RELEASE:=1
 
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=3aa49ec6bfc910647fa1c5a013e48eef
