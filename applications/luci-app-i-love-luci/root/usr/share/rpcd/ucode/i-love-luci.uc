@@ -814,6 +814,21 @@ function read_thermal_zones() {
 	return unique;
 }
 
+function read_connections() {
+	let count = int(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_count') || '0'));
+	let max = int(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_max') || '0'));
+
+	if (!max) {
+		count = int(trim(readfile('/proc/sys/net/ipv4/netfilter/ip_conntrack_count') || '0'));
+		max = int(trim(readfile('/proc/sys/net/ipv4/netfilter/ip_conntrack_max') || '0'));
+	}
+
+	return {
+		count,
+		max
+	};
+}
+
 function read_disk_stats() {
 	let stats = [];
 
@@ -10387,7 +10402,8 @@ const methods = {
 				dhcpLeases: dhcp_leases(),
 				wirelessAssociations: wireless_associations(),
 				thermalZones: read_thermal_zones(),
-				diskStats: read_disk_stats()
+				diskStats: read_disk_stats(),
+				connections: read_connections()
 			});
 		}
 	},

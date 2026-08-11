@@ -14,6 +14,7 @@ import {
 	type ConsoleLaunch,
 	type ConsoleStatus,
 } from "@/lib/rpc";
+import { t } from "@/lib/i18n";
 
 // 最多支持 2 个并发 PTY 会话
 const MAX_SESSIONS = 2;
@@ -138,20 +139,20 @@ export function ConsolePage() {
 						<SquareTerminal className="size-4" />
 					</div>
 					<div>
-						<h1 className="text-lg font-semibold">Router console</h1>
+						<h1 className="text-lg font-semibold">{t("Router console")}</h1>
 						<p className="text-sm text-muted-foreground">
 							{status?.transport === "tunnel"
-								? "Same-origin terminal tunnel through the authenticated I Love LuCI session."
-								: "Trusted-LAN direct console fallback."}
+								? t("Same-origin terminal tunnel through the authenticated I Love LuCI session.")
+								: t("Trusted-LAN direct console fallback.")}
 						</p>
 					</div>
 				</div>
 				<div className="flex flex-col items-center justify-center gap-4 rounded-md border bg-black/5 py-16 text-center">
 					<SquareTerminal className="size-10 text-muted-foreground" />
-					<p className="text-sm text-muted-foreground">Open a console session to start.</p>
+					<p className="text-sm text-muted-foreground">{t("Open the console to start a session.")}</p>
 					<Button onClick={addTab} type="button">
 						<Plus className="mr-2 size-4" />
-						Open console
+						{t("Open console")}
 					</Button>
 				</div>
 			</div>
@@ -167,18 +168,18 @@ export function ConsolePage() {
 						<SquareTerminal className="size-4" />
 					</div>
 					<div className="min-w-0">
-						<h1 className="text-base font-semibold sm:text-lg">Router console</h1>
+						<h1 className="text-base font-semibold sm:text-lg">{t("Router console")}</h1>
 						<p className="truncate text-xs text-muted-foreground sm:text-sm">
 							{status?.transport === "tunnel"
-								? "Same-origin terminal tunnel through the authenticated session."
-								: "Trusted-LAN direct console fallback."}
+								? t("Same-origin terminal tunnel through the authenticated session.")
+								: t("Trusted-LAN direct console fallback.")}
 						</p>
 					</div>
 				</div>
 				{tabs.length < MAX_SESSIONS && (
 					<Button size="sm" type="button" variant="outline" onClick={addTab}>
 						<Plus className="mr-1.5 size-3.5" />
-						New session
+						{t("New session")}
 					</Button>
 				)}
 			</div>
@@ -265,14 +266,14 @@ function TabContent({
 	}
 
 	if (tab.state === "ready" && embeddedUrl) {
-		return <iframe className="size-full border-0" src={embeddedUrl} title="Router console" />;
+		return <iframe className="size-full border-0" src={embeddedUrl} title={t("Router console")} />;
 	}
 
 	return (
 		<div className="grid size-full place-items-center p-6 text-center text-sm text-muted-foreground">
 			{tab.state === "idle" ? (
 				<div className="grid gap-3">
-					<p>Open the console to start a session.</p>
+					<p>{t("Open the console to start a session.")}</p>
 					{fallbackUrl && !tab.launch?.sessionId ? (
 						<Button
 							type="button"
@@ -280,27 +281,27 @@ function TabContent({
 							onClick={() => window.open(fallbackUrl, "_blank", "noopener,noreferrer")}
 						>
 							<ExternalLink className="mr-2 size-4" />
-							Open console
+							{t("Open console")}
 						</Button>
 					) : (
 						<Button type="button" onClick={() => onLaunch(tab.id)}>
 							<SquareTerminal className="mr-2 size-4" />
-							Open console
+							{t("Open console")}
 						</Button>
 					)}
 				</div>
 			) : null}
-			{tab.state === "loading" ? <p>Opening console...</p> : null}
+			{tab.state === "loading" ? <p>{t("Opening console...")}</p> : null}
 			{tab.state === "unavailable" ? (
 				<div className="grid gap-2">
-					<p>Console bridge is not available.</p>
+					<p>{t("Console bridge is not available.")}</p>
 					<p>
-						Helper status: {status?.available ? "installed" : "missing"} /{" "}
-						{status?.enabled ? "enabled" : "disabled"}
+						{t("Helper status:")} {status?.available ? t("installed") : t("missing")} /{" "}
+						{status?.enabled ? t("enabled") : t("disabled")}
 					</p>
 				</div>
 			) : null}
-			{tab.state === "error" ? <p>Console launch failed. Refresh and try again.</p> : null}
+			{tab.state === "error" ? <p>{t("Console launch failed. Refresh and try again.")}</p> : null}
 		</div>
 	);
 }
@@ -486,10 +487,10 @@ function TunnelConsole({ pollAfterMs, sessionId }: { pollAfterMs?: number; sessi
 				className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words p-2.5 font-mono leading-snug sm:p-3"
 				onClick={() => textareaRef.current?.focus()}
 			>
-				{output || "Opening router shell..."}
+				{output || t("Opening router shell...")}
 				{!active && (
 					<div className="mt-2 text-zinc-500 text-[10px]">
-						— Console session ended —
+						— {t("Console session ended")} —
 					</div>
 				)}
 			</div>
@@ -501,7 +502,7 @@ function TunnelConsole({ pollAfterMs, sessionId }: { pollAfterMs?: number; sessi
 					autoCorrect="off"
 					className="min-h-[2.5rem] min-w-0 flex-1 resize-none bg-transparent px-3 py-2 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-600 leading-5"
 					disabled={!active}
-					placeholder={active ? "Type a command and press Enter (Ctrl+C / Ctrl+D supported)" : "Session ended"}
+					placeholder={active ? t("Type a command and press Enter (Ctrl+C / Ctrl+D supported)") : t("Session ended")}
 					rows={1}
 					spellCheck={false}
 					onChange={handleChange}

@@ -2,6 +2,7 @@ import { AlertCircle, AlertTriangle, Bell, Info, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getSystemEvents, type SystemEvent } from "@/lib/rpc";
+import { t } from "@/lib/i18n";
 
 // 每 30 秒轮询一次系统事件
 const POLL_INTERVAL_MS = 30_000;
@@ -117,14 +118,14 @@ export function NotificationCenter() {
 				<div className="absolute right-0 top-11 z-50 w-96 max-w-[calc(100vw-2rem)] rounded-lg border bg-card shadow-xl">
 					{/* 面板标题 */}
 					<div className="flex items-center justify-between border-b px-4 py-3">
-						<span className="text-sm font-semibold">System Events</span>
+						<span className="text-sm font-semibold">{t("System Events")}</span>
 						<div className="flex items-center gap-2">
 							<button
 								className="text-xs text-muted-foreground hover:text-foreground transition-colors"
 								type="button"
 								onClick={clearNotifications}
 							>
-								Mark all read
+								{t("Mark all read")}
 							</button>
 							<button
 								aria-label="Close notifications"
@@ -142,7 +143,7 @@ export function NotificationCenter() {
 						{events.length === 0 ? (
 							<div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">
 								<Bell className="size-8 opacity-30" />
-								<p>No recent system events</p>
+								<p>{t("No recent system events")}</p>
 							</div>
 						) : (
 							<ul>
@@ -183,7 +184,7 @@ export function NotificationCenter() {
 
 					{/* 底部说明 */}
 					<div className="border-t px-4 py-2.5 text-xs text-muted-foreground">
-						Last {MAX_DISPLAY} events from system log · Refreshes every 30s
+						{t("Last 30 events from system log · Refreshes every 30s")}
 					</div>
 				</div>
 			)}

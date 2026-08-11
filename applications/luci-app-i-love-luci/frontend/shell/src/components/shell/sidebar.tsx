@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { flattenMenu, itemTarget } from "@/lib/navigation";
 import { getMenuTree, type MenuItem } from "@/lib/rpc";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 type SidebarProps = {
 	desktopOpen: boolean;
@@ -123,14 +124,14 @@ function NavItem({
 					onClick={onClose}
 				>
 					{depth === 0 ? itemIcon(item) : <span className="size-4 shrink-0" />}
-					<span className="min-w-0 truncate">{item.title}</span>
+					<span className="min-w-0 truncate">{t(item.title)}</span>
 				</Link>
 				{hasChildren ? (
 					<Button
 						className="size-8 shrink-0"
 						size="icon"
 						variant="ghost"
-						aria-label={isExpanded ? `Collapse ${item.title}` : `Expand ${item.title}`}
+						aria-label={isExpanded ? `Collapse ${t(item.title)}` : `Expand ${t(item.title)}`}
 						aria-expanded={isExpanded}
 						onClick={() => onToggle(item.path)}
 					>
@@ -221,7 +222,7 @@ function NavItems({ onClose }: { onClose?: () => void }) {
 		<nav className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden">
 			<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
 				<div className="flex items-center justify-between gap-2 px-3 pb-2 pt-3">
-					<div className="text-xs font-semibold uppercase text-muted-foreground">Navigation</div>
+					<div className="text-xs font-semibold uppercase text-muted-foreground">{t("Navigation")}</div>
 					<Button
 						className="h-7 px-2 text-xs"
 						size="sm"
@@ -230,7 +231,7 @@ function NavItems({ onClose }: { onClose?: () => void }) {
 						disabled={!expandablePaths.length}
 						onClick={toggleAll}
 					>
-						{allExpanded ? "Collapse all" : "Expand all"}
+						{allExpanded ? t("Collapse all") : t("Expand all")}
 					</Button>
 				</div>
 				<div className="grid gap-1">

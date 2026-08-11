@@ -11,7 +11,7 @@ import {
 	Tooltip,
 } from "chart.js";
 import type { ChartData, ChartOptions } from "chart.js";
-import { Activity, Cpu, HardDrive, MemoryStick, Network, Thermometer, Wifi } from "lucide-react";
+import { Activity, ChevronRight, Cpu, HardDrive, MemoryStick, Network, Thermometer, Wifi } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bar, Doughnut, Line } from "react-chartjs-2";
@@ -29,6 +29,8 @@ import {
 	type ThermalZone,
 	type WirelessAssociation,
 } from "@/lib/rpc";
+import { t } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 
 ChartJS.register(
 	ArcElement,
@@ -51,6 +53,8 @@ type BandwidthSample = {
 	diskReadMBps: number;
 	diskWriteMBps: number;
 	maxTempC: number;
+	activeConnections: number;
+	maxConnections: number;
 };
 
 // 接口速率迷你趋势线（最近 10 个采样点）
@@ -208,6 +212,7 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 	const previousStatus = useRef<DashboardStatus | null>(null);
 	const previousTime = useRef<number | null>(null);
 	const previousDiskStats = useRef<DiskStatEntry[] | null>(null);
+	const [leasesExpanded, setLeasesExpanded] = useState(true);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -259,6 +264,8 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 					diskReadMBps,
 					diskWriteMBps,
 					maxTempC,
+					activeConnections: nextStatus.connections?.count ?? 0,
+					maxConnections: nextStatus.connections?.max ?? 0,
 				},
 			]);
 
@@ -317,7 +324,7 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 			labels: samples.map((sample) => sample.label),
 			datasets: [
 				{
-					label: "Download",
+					label: t("Download"),
 					data: samples.map((sample) => sample.rxMbps),
 					borderColor: "#0f766e",
 					backgroundColor: "rgb(15 118 110 / 0.12)",
@@ -327,7 +334,7 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 					pointHoverRadius: 3,
 				},
 				{
-					label: "Upload",
+					label: t("Upload"),
 					data: samples.map((sample) => sample.txMbps),
 					borderColor: "#2563eb",
 					backgroundColor: "rgb(37 99 235 / 0.08)",
@@ -343,7 +350,7 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 
 	const memoryData = useMemo<ChartData<"doughnut">>(
 		() => ({
-			labels: ["Used", "Available"],
+			labels: [t("Used"), t("Available")],
 			datasets: [
 				{
 					data: [memory.used, memory.available],
@@ -399,55 +406,58 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 			</div>
 
 			<div className={`grid gap-3 sm:grid-cols-2 ${(status.thermalZones ?? []).length > 0 ? 'xl:grid-cols-6' : 'xl:grid-cols-5'}`}>
-				<MetricCard icon={Network} label="Download" value={formatMbps(totalRx)} detail={trafficDetail} />
-				<MetricCard icon={Activity} label="Upload" value={formatMbps(totalTx)} detail={trafficDetail} />
-				<MetricCard icon={MemoryStick} label="Memory" value={`${memory.percent.toFixed(0)}%`} detail={formatBytes(memory.used)} />
-				<MetricCard icon={HardDrive} label="Disk" value={`${root.percent.toFixed(0)}%`} detail="root filesystem used" />
-				<MetricCard icon={Cpu} label="CPU load" value={load1.toFixed(2)} detail="1 minute average" />
+				<MetricCard icon={Network} label={t("Download")} value={formatMbps(totalRx)} detail={trafficDetail} />
+				<MetricCard icon={Activity} label={t("Upload")} value={formatMbps(totalTx)} detail={trafficDetail} />
+				<MetricCard icon={MemoryStick} label={t("Memory")} value={`${memory.percent.toFixed(0)}%`} detail={formatBytes(memory.used)} />
+				<MetricCard icon={HardDrive} label={t("Disk")} value={`${root.percent.toFixed(0)}%`} detail={t("root filesystem used")} />
+				<MetricCard icon={Cpu} label={t("CPU load")} value={load1.toFixed(2)} detail={t("1 minute average")} />
 				{(status.thermalZones ?? []).length > 0 && (
 					<MetricCard
 						icon={Thermometer}
-						label="Temperature"
+						label={t("Temperature")}
 						value={`${(samples[samples.length - 1]?.maxTempC ?? 0).toFixed(1)}°C`}
-						detail={`${(status.thermalZones ?? []).length} sensor${(status.thermalZones ?? []).length > 1 ? 's' : ''}`}
+						detail={`${(status.thermalZones ?? []).length} ${t("sensors")}`}
 					/>
 				)}
 			</div>
 
 			<div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(22rem,1fr)]">
-				<Card>
-					<CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-						<CardTitle>Bandwidth</CardTitle>
-						<div className="flex flex-wrap items-center gap-2">
-							<label className="text-xs text-muted-foreground" htmlFor="dashboard-traffic-source">
-								Source
-							</label>
-							<select
-								className="h-8 max-w-full rounded-md border bg-card px-2 text-sm"
-								id="dashboard-traffic-source"
-								onChange={(event) => changeTrafficSource(event.target.value)}
-								value={selectedTrafficSource.id}
-							>
-								{trafficSourceOptions.map((option) => (
-									<option key={option.id} value={option.id}>
-										{option.label}
-									</option>
-								))}
-							</select>
-							<span className="text-xs text-muted-foreground">Polls every {pollIntervalMs / 1000}s</span>
-						</div>
-					</CardHeader>
-					<CardContent>
-						<div className="h-72">
-							{loading ? <EmptyChartLabel label="Loading bandwidth" /> : <Line data={bandwidthData} options={lineOptions} />}
-						</div>
-					</CardContent>
-				</Card>
+				<div className="grid gap-5 h-fit">
+					<Card>
+						<CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+							<CardTitle>{t("Bandwidth")}</CardTitle>
+							<div className="flex flex-wrap items-center gap-2">
+								<label className="text-xs text-muted-foreground" htmlFor="dashboard-traffic-source">
+									{t("Source")}
+								</label>
+								<select
+									className="h-8 max-w-full rounded-md border bg-card px-2 text-sm"
+									id="dashboard-traffic-source"
+									onChange={(event) => changeTrafficSource(event.target.value)}
+									value={selectedTrafficSource.id}
+								>
+									{trafficSourceOptions.map((option) => (
+										<option key={option.id} value={option.id}>
+											{t(option.label)}
+										</option>
+									))}
+								</select>
+								<span className="text-xs text-muted-foreground">{t("Polls every")} {pollIntervalMs / 1000}s</span>
+							</div>
+						</CardHeader>
+						<CardContent>
+							<div className="h-72">
+								{loading ? <EmptyChartLabel label={t("Loading bandwidth")} /> : <Line data={bandwidthData} options={lineOptions} />}
+							</div>
+						</CardContent>
+					</Card>
+					<ConnectionsCard samples={samples} status={status} />
+				</div>
 
 				<div className="grid gap-5">
 					<Card>
 						<CardHeader>
-							<CardTitle>Memory</CardTitle>
+							<CardTitle>{t("Memory")}</CardTitle>
 						</CardHeader>
 						<CardContent className="grid gap-4">
 							<div className="grid justify-center gap-3">
@@ -456,55 +466,55 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 									<div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
 										<div>
 											<div className="text-2xl font-semibold">{memory.percent.toFixed(0)}%</div>
-											<div className="text-xs text-muted-foreground">used</div>
+											<div className="text-xs text-muted-foreground">{t("used")}</div>
 										</div>
 									</div>
 								</div>
 								<ChartLegend
 									items={[
-										{ color: "#0f766e", label: `Used ${formatBytes(memory.used)}` },
-										{ color: "#e4e4e7", label: `Available ${formatBytes(memory.available)}` },
+										{ color: "#0f766e", label: `${t("Used")} ${formatBytes(memory.used)}` },
+										{ color: "#e4e4e7", label: `${t("Available")} ${formatBytes(memory.available)}` },
 									]}
 								/>
 							</div>
 							<ResourceDetails
 								rows={[
-									["Total", formatBytes(memory.total)],
-									["Available", formatBytes(memory.available)],
-									["Free", formatBytes(status.system.memory?.free ?? 0)],
-									["Cached", formatBytes(status.system.memory?.cached ?? 0)],
-									["Buffered", formatBytes(status.system.memory?.buffered ?? 0)],
-									["Shared", formatBytes(status.system.memory?.shared ?? 0)],
+									[t("Total"), formatBytes(memory.total)],
+									[t("Available"), formatBytes(memory.available)],
+									[t("Free"), formatBytes(status.system.memory?.free ?? 0)],
+									[t("Cached"), formatBytes(status.system.memory?.cached ?? 0)],
+									[t("Buffered"), formatBytes(status.system.memory?.buffered ?? 0)],
+									[t("Shared"), formatBytes(status.system.memory?.shared ?? 0)],
 								]}
-								summary="Memory details"
+								summary={t("Memory details")}
 							/>
 						</CardContent>
 					</Card>
 
 					<Card>
 						<CardHeader>
-							<CardTitle>Disk Space</CardTitle>
+							<CardTitle>{t("Disk Space")}</CardTitle>
 						</CardHeader>
 						<CardContent className="grid gap-4 text-sm">
-							<StorageMeter label="Root filesystem" usage={root} />
-							<StorageMeter label="Temporary filesystem" usage={tmp} />
+							<StorageMeter label={t("Root filesystem")} usage={root} />
+							<StorageMeter label={t("Temporary filesystem")} usage={tmp} />
 							<ResourceDetails
 								rows={[
-									["Root total", formatBytes(root.total)],
-									["Root used", formatBytes(root.used)],
-									["Root free", formatBytes(Math.max(0, root.total - root.used))],
-									["Temp total", formatBytes(tmp.total)],
-									["Temp used", formatBytes(tmp.used)],
-									["Temp free", formatBytes(Math.max(0, tmp.total - tmp.used))],
+									[t("Root total"), formatBytes(root.total)],
+									[t("Root used"), formatBytes(root.used)],
+									[t("Root free"), formatBytes(Math.max(0, root.total - root.used))],
+									[t("Temp total"), formatBytes(tmp.total)],
+									[t("Temp used"), formatBytes(tmp.used)],
+									[t("Temp free"), formatBytes(Math.max(0, tmp.total - tmp.used))],
 								]}
-								summary="Disk details"
+								summary={t("Disk details")}
 							/>
 						</CardContent>
 					</Card>
 
 					<Card>
 						<CardHeader>
-							<CardTitle>CPU load</CardTitle>
+							<CardTitle>{t("CPU load")}</CardTitle>
 						</CardHeader>
 						<CardContent>
 							<div className="h-48">
@@ -515,45 +525,59 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 				</div>
 			</div>
 
-			<div className="grid gap-5 xl:grid-cols-2">
+			<div className="grid gap-5">
 				<Card>
-					<CardHeader className="flex flex-row items-center justify-between gap-3">
-						<CardTitle>Associated Devices</CardTitle>
-						<Badge>{status.wirelessAssociations?.length ?? 0} devices</Badge>
+					<CardHeader
+						className="flex flex-row items-center justify-between gap-3 cursor-pointer select-none"
+						onClick={() => setLeasesExpanded((prev) => !prev)}
+					>
+						<div className="flex items-center gap-2">
+							<CardTitle>{t("Active DHCP Leases")}</CardTitle>
+							<Badge>{status.dhcpLeases?.length ?? 0} {t("leases")}</Badge>
+						</div>
+						<Button
+							className="h-8 w-8"
+							size="icon"
+							variant="ghost"
+							type="button"
+							aria-expanded={leasesExpanded}
+							aria-label={leasesExpanded ? "Collapse leases" : "Expand leases"}
+						>
+							<ChevronRight className={cn("size-4 transition-transform duration-300", leasesExpanded && "rotate-90")} />
+						</Button>
 					</CardHeader>
-					<CardContent className="p-0">
-						<AssociationTable associations={status.wirelessAssociations ?? []} />
-					</CardContent>
-				</Card>
-
-				<Card>
-					<CardHeader className="flex flex-row items-center justify-between gap-3">
-						<CardTitle>Active DHCP Leases</CardTitle>
-						<Badge>{status.dhcpLeases?.length ?? 0} leases</Badge>
-					</CardHeader>
-					<CardContent className="p-0">
-						<LeaseTable leases={status.dhcpLeases ?? []} />
-					</CardContent>
+					<div
+						className={cn(
+							"grid transition-[grid-template-rows,opacity] duration-300 ease-in-out",
+							leasesExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+						)}
+					>
+						<div className="overflow-hidden">
+							<CardContent className="p-0 border-t">
+								<LeaseTable leases={status.dhcpLeases ?? []} />
+							</CardContent>
+						</div>
+					</div>
 				</Card>
 			</div>
 
 			<div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(22rem,1fr)]">
 				<Card>
 					<CardHeader>
-						<CardTitle>Interfaces</CardTitle>
+						<CardTitle>{t("Interfaces")}</CardTitle>
 					</CardHeader>
 					<CardContent className="p-0">
 						<div className="overflow-x-auto">
 							<table className="w-full min-w-[42rem] text-left text-sm">
 								<thead className="border-b text-xs uppercase text-muted-foreground">
 									<tr>
-										<th className="px-4 py-3 font-medium">Device</th>
-										<th className="px-4 py-3 font-medium">State</th>
-										<th className="px-4 py-3 font-medium">Speed</th>
-										<th className="px-4 py-3 text-right font-medium">Download</th>
-										<th className="px-4 py-3 text-right font-medium">Upload</th>
-										<th className="px-4 py-3 text-right font-medium">Transferred</th>
-										<th className="px-4 py-3 text-right font-medium">Trend</th>
+										<th className="px-4 py-3 font-medium">{t("Device")}</th>
+										<th className="px-4 py-3 font-medium">{t("State")}</th>
+										<th className="px-4 py-3 font-medium">{t("Speed")}</th>
+										<th className="px-4 py-3 text-right font-medium">{t("Download")}</th>
+										<th className="px-4 py-3 text-right font-medium">{t("Upload")}</th>
+										<th className="px-4 py-3 text-right font-medium">{t("Transferred")}</th>
+										<th className="px-4 py-3 text-right font-medium">{t("Trend")}</th>
 									</tr>
 								</thead>
 								<tbody>
@@ -563,7 +587,7 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 												<td className="px-4 py-3 font-medium">{device.name}</td>
 												<td className="px-4 py-3">
 													<Badge className={device.carrier ? "text-primary" : ""}>
-														{device.carrier ? "Connected" : device.up ? "Up" : "Down"}
+														{device.carrier ? t("Connected") : device.up ? "Up" : "Down"}
 													</Badge>
 												</td>
 												<td className="px-4 py-3 text-muted-foreground">{device.speed}</td>
@@ -588,7 +612,7 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 									) : (
 										<tr>
 											<td className="px-4 py-6 text-muted-foreground" colSpan={7}>
-												No active network devices reported by LuCI.
+												{t("No active network devices reported by LuCI.")}
 											</td>
 										</tr>
 									)}
@@ -600,15 +624,15 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 
 				<Card>
 					<CardHeader>
-						<CardTitle>System</CardTitle>
+						<CardTitle>{t("System")}</CardTitle>
 					</CardHeader>
 					<CardContent className="grid gap-4 text-sm">
-						<InfoRow label="Uptime" value={formatDuration(status.system.uptime ?? 0)} />
-						<InfoRow label="Memory available" value={formatBytes(memory.available)} />
-						<InfoRow label="Root filesystem" value={`${root.percent.toFixed(0)}% used`} />
-						<InfoRow label="Temp filesystem" value={`${tmp.percent.toFixed(0)}% used`} />
-						<InfoRow label="Kernel" value={status.board.release?.description ?? status.board.system ?? "Unavailable"} />
-						<InfoRow label="Target" value={status.board.release?.target ?? "Unavailable"} />
+						<InfoRow label={t("Uptime")} value={formatDuration(status.system.uptime ?? 0)} />
+						<InfoRow label={t("Memory available")} value={formatBytes(memory.available)} />
+						<InfoRow label={t("Root filesystem")} value={`${root.percent.toFixed(0)}% ${t("used")}`} />
+						<InfoRow label={t("Temp filesystem")} value={`${tmp.percent.toFixed(0)}% ${t("used")}`} />
+						<InfoRow label={t("Kernel")} value={status.board.release?.description ?? status.board.system ?? "Unavailable"} />
+						<InfoRow label={t("Target")} value={status.board.release?.target ?? "Unavailable"} />
 					</CardContent>
 				</Card>
 			</div>
@@ -699,12 +723,12 @@ function AssociationTable({ associations }: { associations: WirelessAssociation[
 			<table className="w-full min-w-[44rem] text-left text-sm">
 				<thead className="border-b text-xs uppercase text-muted-foreground">
 					<tr>
-						<th className="px-4 py-3 font-medium">Station</th>
-						<th className="px-4 py-3 font-medium">Interface</th>
-						<th className="px-4 py-3 font-medium">SSID</th>
-						<th className="px-4 py-3 text-right font-medium">Signal</th>
-						<th className="px-4 py-3 text-right font-medium">Rate</th>
-						<th className="px-4 py-3 text-right font-medium">Connected</th>
+						<th className="px-4 py-3 font-medium">{t("Station")}</th>
+						<th className="px-4 py-3 font-medium">{t("Interface")}</th>
+						<th className="px-4 py-3 font-medium">{t("SSID")}</th>
+						<th className="px-4 py-3 text-right font-medium">{t("Signal")}</th>
+						<th className="px-4 py-3 text-right font-medium">{t("Rate")}</th>
+						<th className="px-4 py-3 text-right font-medium">{t("Connected")}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -729,7 +753,7 @@ function AssociationTable({ associations }: { associations: WirelessAssociation[
 					) : (
 						<tr>
 							<td className="px-4 py-6 text-muted-foreground" colSpan={6}>
-								No associated Wi-Fi devices reported.
+								{t("No associated Wi-Fi devices reported.")}
 							</td>
 						</tr>
 					)}
@@ -745,10 +769,10 @@ function LeaseTable({ leases }: { leases: DhcpLease[] }) {
 			<table className="w-full min-w-[44rem] text-left text-sm">
 				<thead className="border-b text-xs uppercase text-muted-foreground">
 					<tr>
-						<th className="px-4 py-3 font-medium">Host</th>
-						<th className="px-4 py-3 font-medium">IP</th>
-						<th className="px-4 py-3 font-medium">MAC</th>
-						<th className="px-4 py-3 text-right font-medium">Expires</th>
+						<th className="px-4 py-3 font-medium">{t("Host")}</th>
+						<th className="px-4 py-3 font-medium">{t("IP")}</th>
+						<th className="px-4 py-3 font-medium">{t("MAC")}</th>
+						<th className="px-4 py-3 text-right font-medium">{t("Expires")}</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -764,7 +788,7 @@ function LeaseTable({ leases }: { leases: DhcpLease[] }) {
 					) : (
 						<tr>
 							<td className="px-4 py-6 text-muted-foreground" colSpan={4}>
-								No active DHCP leases found.
+								{t("No active DHCP leases found.")}
 							</td>
 						</tr>
 					)}
@@ -911,15 +935,15 @@ function ThermalCard({
 	return (
 		<Card>
 			<CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-				<CardTitle>Temperature</CardTitle>
+				<CardTitle>{t("Temperature")}</CardTitle>
 				<span className="text-sm text-muted-foreground">
-					Peak: {latestTemp.toFixed(1)}°C · {zones.length} sensor{zones.length > 1 ? "s" : ""}
+					{t("Peak")}: {latestTemp.toFixed(1)}°C · {zones.length} {t("sensors")}
 				</span>
 			</CardHeader>
 			<CardContent>
 				<div className="h-48">
 					{samples.length < 2 ? (
-						<EmptyChartLabel label="Collecting thermal data..." />
+						<EmptyChartLabel label={t("Collecting thermal data...")} />
 					) : (
 						<Line data={thermalData} options={thermalLineOptions} />
 					)}
@@ -943,7 +967,7 @@ const diskLineOptions: ChartOptions<"line"> = {
 		tooltip: {
 			callbacks: {
 				label: (item) =>
-					`${item.dataset.label}: ${Number(item.raw).toFixed(2)} MB/s`,
+					`${t(item.dataset.label ?? "")}: ${Number(item.raw).toFixed(2)} MB/s`,
 			},
 		},
 	},
@@ -962,7 +986,7 @@ function DiskIOCard({ samples }: { samples: BandwidthSample[] }) {
 			labels: samples.map((s) => s.label),
 			datasets: [
 				{
-					label: "Read",
+					label: t("Read"),
 					data: samples.map((s) => s.diskReadMBps),
 					borderColor: "#7c3aed",
 					backgroundColor: "rgb(124 58 237 / 0.10)",
@@ -972,7 +996,7 @@ function DiskIOCard({ samples }: { samples: BandwidthSample[] }) {
 					pointHoverRadius: 3,
 				},
 				{
-					label: "Write",
+					label: t("Write"),
 					data: samples.map((s) => s.diskWriteMBps),
 					borderColor: "#db2777",
 					backgroundColor: "rgb(219 39 119 / 0.08)",
@@ -996,14 +1020,89 @@ function DiskIOCard({ samples }: { samples: BandwidthSample[] }) {
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Disk I/O</CardTitle>
+				<CardTitle>{t("Disk I/O")}</CardTitle>
 			</CardHeader>
 			<CardContent>
 				<div className="h-48">
 					{samples.length < 2 ? (
-						<EmptyChartLabel label="Collecting disk I/O data..." />
+						<EmptyChartLabel label={t("Collecting disk I/O data...")} />
 					) : (
 						<Line data={diskData} options={diskLineOptions} />
+					)}
+				</div>
+			</CardContent>
+		</Card>
+	);
+}
+
+// ─── 连接数速率折线图卡片 ──────────────────────────────────────────────────
+
+const connectionsLineOptions: ChartOptions<"line"> = {
+	responsive: true,
+	maintainAspectRatio: false,
+	interaction: { intersect: false, mode: "index" },
+	plugins: {
+		legend: {
+			position: "bottom",
+			labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true },
+		},
+		tooltip: {
+			callbacks: {
+				label: (item) =>
+					`${t(item.dataset.label ?? "")}: ${Number(item.raw).toFixed(0)}`,
+			},
+		},
+	},
+	scales: {
+		x: { grid: { display: false } },
+		y: {
+			beginAtZero: true,
+			ticks: { callback: (v) => `${Number(v).toFixed(0)}` },
+		},
+	},
+};
+
+function ConnectionsCard({ samples, status }: { samples: BandwidthSample[]; status: DashboardStatus }) {
+	const currentCount = status.connections?.count ?? 0;
+	const currentMax = status.connections?.max ?? 0;
+
+	const connectionsData = useMemo<ChartData<"line">>(
+		() => ({
+			labels: samples.map((s) => s.label),
+			datasets: [
+				{
+					label: t("Active Connections"),
+					data: samples.map((s) => s.activeConnections),
+					borderColor: "#0284c7", // sky-600
+					backgroundColor: "rgb(2 132 199 / 0.10)",
+					fill: true,
+					tension: 0.35,
+					pointRadius: 0,
+					pointHoverRadius: 3,
+				}
+			],
+		}),
+		[samples],
+	);
+
+	if (currentMax === 0) {
+		return null;
+	}
+
+	return (
+		<Card>
+			<CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+				<CardTitle>{t("Connections")}</CardTitle>
+				<span className="text-sm text-muted-foreground">
+					{currentCount} / {currentMax} {t("max")}
+				</span>
+			</CardHeader>
+			<CardContent>
+				<div className="h-48">
+					{samples.length < 2 ? (
+						<EmptyChartLabel label={t("Collecting connection data...")} />
+					) : (
+						<Line data={connectionsData} options={connectionsLineOptions} />
 					)}
 				</div>
 			</CardContent>

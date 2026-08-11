@@ -228,6 +228,10 @@ export type DashboardStatus = {
 	wirelessAssociations?: WirelessAssociation[];
 	thermalZones?: ThermalZone[];
 	diskStats?: DiskStatEntry[];
+	connections?: {
+		count: number;
+		max: number;
+	};
 };
 
 

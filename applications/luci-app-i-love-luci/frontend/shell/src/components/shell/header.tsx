@@ -17,6 +17,7 @@ import {
 	type PendingChange,
 	type SessionInfo,
 } from "@/lib/rpc";
+import { t, getLanguagePreference, setLanguagePreference } from "@/lib/i18n";
 
 type HeaderProps = {
 	navigationOpen: boolean;
@@ -101,15 +102,15 @@ export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
 						type="button"
 						onClick={() => void openPending()}
 					>
-						{pending} pending
+						{pending} {t("pending")}
 					</button>
 				) : null}
 				<NotificationCenter />
 				<Button
 					size="icon"
 					variant="outline"
-					aria-label="Open console"
-					title="Open console"
+					aria-label={t("Open console")}
+					title={t("Open console")}
 					onClick={() => void openConsole()}
 				>
 					<SquareTerminal className="size-4" />
@@ -127,13 +128,30 @@ export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
 					</Button>
 					{profileOpen ? (
 						<div className="absolute right-0 top-11 z-50 w-52 rounded-lg border bg-card p-1 text-sm shadow-xl">
-							<div className="px-3 py-2 text-xs text-muted-foreground">Signed in as {user}</div>
+							<div className="px-3 py-2 text-xs text-muted-foreground">{t("Signed in as")} {user}</div>
+							
+							{/* 语言切换按钮 */}
+							<div className="flex items-center justify-between border-b border-t py-1.5 px-3 my-1">
+								<span className="text-xs text-muted-foreground">Language</span>
+								<button
+									className="text-xs font-medium text-primary hover:underline"
+									type="button"
+									onClick={() => {
+										const current = getLanguagePreference();
+										setLanguagePreference(current === "zh" ? "en" : "zh");
+										window.location.reload();
+									}}
+								>
+									{getLanguagePreference() === "zh" ? "English" : "简体中文"}
+								</button>
+							</div>
+
 							<a
-								className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-secondary"
+								className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-secondary text-destructive"
 								href="/cgi-bin/luci/admin/logout"
 							>
 								<LogOut className="size-4" />
-								Log out
+								{t("Log out")}
 							</a>
 						</div>
 					) : null}
@@ -142,32 +160,32 @@ export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
 			<Dialog
 				className="max-w-5xl"
 				open={consoleOpen}
-				title="Router console"
+				title={t("Router console")}
 				onOpenChange={setConsoleOpen}
 			>
 				{consoleStatus?.available && consoleStatus.enabled ? (
 					<div className="grid gap-4 text-sm">
 						<p className="text-muted-foreground">
 							{consoleStatus.transport === "tunnel"
-								? "Console tunnel is available through the authenticated I Love LuCI session."
-								: `Console service is available on port ${consoleStatus.port}. This will use the trusted-LAN direct fallback.`}
+								? t("Console tunnel is available through the authenticated I Love LuCI session.")
+								: `${t("Console service is available on port")} ${consoleStatus.port}. ${t("This will use the trusted-LAN direct fallback.")}`}
 						</p>
 						<div className="flex justify-end">
 							<Button variant="outline" onClick={() => void openConsole()}>
-								Open console
+								{t("Open console")}
 							</Button>
 						</div>
 					</div>
 				) : (
 					<div className="grid gap-3 text-sm text-muted-foreground">
-						<p>Console bridge is not available. Install and enable the `i-love-luci-console` helper on the router.</p>
+						<p>{t("Console bridge is not available. Install and enable the `i-love-luci-console` helper on the router.")}</p>
 					</div>
 				)}
 			</Dialog>
 			<Dialog
 				className="max-w-3xl"
 				open={pendingOpen}
-				title="Pending changes"
+				title={t("Pending changes")}
 				onOpenChange={setPendingOpen}
 			>
 				<div className="grid gap-4">
@@ -175,11 +193,11 @@ export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
 						<table className="w-full min-w-[40rem] text-left text-sm">
 							<thead className="border-b text-xs uppercase text-muted-foreground">
 								<tr>
-									<th className="px-3 py-2 font-medium">Config</th>
-									<th className="px-3 py-2 font-medium">Action</th>
-									<th className="px-3 py-2 font-medium">Section</th>
-									<th className="px-3 py-2 font-medium">Option</th>
-									<th className="px-3 py-2 font-medium">Value</th>
+									<th className="px-3 py-2 font-medium">{t("Config")}</th>
+									<th className="px-3 py-2 font-medium">{t("Action")}</th>
+									<th className="px-3 py-2 font-medium">{t("Section")}</th>
+									<th className="px-3 py-2 font-medium">{t("Option")}</th>
+									<th className="px-3 py-2 font-medium">{t("Value")}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -196,7 +214,7 @@ export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
 								) : (
 									<tr>
 										<td className="px-3 py-6 text-muted-foreground" colSpan={5}>
-											No pending changes.
+											{t("No pending changes.")}
 										</td>
 									</tr>
 								)}
@@ -205,10 +223,10 @@ export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
 					</div>
 					<div className="flex justify-end gap-2">
 						<Button variant="outline" onClick={() => setPendingOpen(false)}>
-							Close
+							{t("Close")}
 						</Button>
 						<Button disabled={!pendingChanges.length} variant="outline" onClick={() => void discardPending()}>
-							Discard changes
+							{t("Discard changes")}
 						</Button>
 					</div>
 				</div>

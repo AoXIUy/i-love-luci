@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { getMenuTree, setRouteMode, type MenuItem } from "@/lib/rpc";
 import { coverageLabels, routeModeLabels, routeModeOptions, selectedRouteMode } from "@/lib/route-modes";
+import { t } from "@/lib/i18n";
 
 export function SettingsPage() {
 	const [mfaOpen, setMfaOpen] = useState(false);
@@ -36,38 +37,38 @@ export function SettingsPage() {
 		setRoutes((current) =>
 			current.map((item) => (item.path === route.path ? { ...item, configuredMode: nextMode } : item)),
 		);
-		toast.success("Route mode saved", {
-			description: `${route.title} uses ${routeModeLabels[nextMode]}.`,
+		toast.success(t("Route mode saved"), {
+			description: `${t(route.title)} uses ${t(routeModeLabels[nextMode])}.`,
 		});
 	}
 
 	return (
 		<div className="mx-auto grid max-w-6xl gap-5">
 			<div>
-				<h1 className="text-2xl font-semibold">Settings</h1>
-				<p className="text-sm text-muted-foreground">Router shell configuration and security options.</p>
+				<h1 className="text-2xl font-semibold">{t("Settings")}</h1>
+				<p className="text-sm text-muted-foreground">{t("Router shell configuration and security options.")}</p>
 			</div>
 			<Card>
 				<CardHeader>
-					<CardTitle>Authentication</CardTitle>
+					<CardTitle>{t("Authentication")}</CardTitle>
 				</CardHeader>
 				<CardContent className="grid gap-4">
 					<div className="flex items-center justify-between gap-4">
 						<div>
-							<p className="font-medium">Multi-factor authentication</p>
+							<p className="font-medium">{t("Multi-factor authentication")}</p>
 							<p className="text-sm text-muted-foreground">
-								TOTP MFA requires server-side support before it can be enabled.
+								{t("TOTP MFA requires server-side support before it can be enabled.")}
 							</p>
 						</div>
 						<Button variant="outline" onClick={() => setMfaOpen(true)}>
-							Configure
+							{t("Configure")}
 						</Button>
 					</div>
 					<div className="flex items-center justify-between gap-4 border-t pt-4">
 						<div>
-							<p className="font-medium">Passcode / passkey</p>
+							<p className="font-medium">{t("Passcode / passkey")}</p>
 							<p className="text-sm text-muted-foreground">
-								Passcode is feasible later; WebAuthn/passkey should be optional after TOTP lands.
+								{t("Passcode is feasible later; WebAuthn/passkey should be optional after TOTP lands.")}
 							</p>
 						</div>
 						<Button
@@ -78,23 +79,23 @@ export function SettingsPage() {
 								})
 							}
 						>
-							Review
+							{t("Review")}
 						</Button>
 					</div>
 				</CardContent>
 			</Card>
 			<Card>
 				<CardHeader>
-					<CardTitle>Route compatibility</CardTitle>
+					<CardTitle>{t("Route compatibility")}</CardTitle>
 				</CardHeader>
 				<CardContent className="grid gap-4">
 					<div className="grid gap-2 sm:max-w-md">
 						<label className="text-sm font-medium" htmlFor="route-search">
-							Search routes
+							{t("Search routes")}
 						</label>
 						<Input
 							id="route-search"
-							placeholder="Status, DHCP, firewall"
+							placeholder={t("Status, DHCP, firewall")}
 							value={routeQuery}
 							onChange={(event) => setRouteQuery(event.target.value)}
 						/>
@@ -103,20 +104,20 @@ export function SettingsPage() {
 						<table className="w-full min-w-[48rem] text-left text-sm">
 							<thead className="border-b text-xs uppercase text-muted-foreground">
 								<tr>
-									<th className="px-3 py-2 font-medium">Route</th>
-									<th className="px-3 py-2 font-medium">Coverage</th>
-									<th className="px-3 py-2 font-medium">Mode</th>
+									<th className="px-3 py-2 font-medium">{t("Route")}</th>
+									<th className="px-3 py-2 font-medium">{t("Coverage")}</th>
+									<th className="px-3 py-2 font-medium">{t("Mode")}</th>
 								</tr>
 							</thead>
 							<tbody>
 								{visibleRoutes.map((route) => (
 									<tr className="border-b last:border-0" key={route.path}>
 										<td className="px-3 py-2">
-											<div className="font-medium">{route.title}</div>
+											<div className="font-medium">{t(route.title)}</div>
 											<div className="text-xs text-muted-foreground">{route.path}</div>
 										</td>
 										<td className="px-3 py-2 text-muted-foreground">
-											{coverageLabels[route.nativeStatus ?? "unsupported"]}
+											{t(coverageLabels[route.nativeStatus ?? "unsupported"])}
 										</td>
 										<td className="px-3 py-2">
 											<select
@@ -126,7 +127,7 @@ export function SettingsPage() {
 											>
 												{routeModeOptions(route).map((mode) => (
 													<option key={mode} value={mode}>
-														{routeModeLabels[mode]}
+														{t(routeModeLabels[mode])}
 													</option>
 												))}
 											</select>
@@ -138,20 +139,20 @@ export function SettingsPage() {
 					</div>
 				</CardContent>
 			</Card>
-			<Dialog open={mfaOpen} title="MFA setup" onOpenChange={setMfaOpen}>
+			<Dialog open={mfaOpen} title={t("MFA setup")} onOpenChange={setMfaOpen}>
 				<div className="grid gap-4">
 					<p className="text-sm text-muted-foreground">
-						MFA setup is not available in this package yet. TOTP secrets must be generated and verified on the router.
+						{t("MFA setup is not available in this package yet. TOTP secrets must be generated and verified on the router.")}
 					</p>
 					<div className="grid gap-2">
 						<label className="text-sm font-medium" htmlFor="mfa-code">
-							Verification code
+							{t("Verification code")}
 						</label>
 						<Input id="mfa-code" inputMode="numeric" placeholder="000000" />
 					</div>
 					<div className="flex justify-end gap-2">
 						<Button variant="outline" onClick={() => setMfaOpen(false)}>
-							Cancel
+							{t("Cancel")}
 						</Button>
 						<Button
 							onClick={() => {
@@ -161,7 +162,7 @@ export function SettingsPage() {
 								});
 							}}
 						>
-							Verify
+							{t("Verify")}
 						</Button>
 					</div>
 				</div>
