@@ -1173,7 +1173,7 @@ function trafficSourceOptionsFor(interfaces?: NetworkInterfaceStatus[]): Traffic
 		{
 			id: "all",
 			label: "All WAN",
-			detail: "Default WAN-like interfaces",
+			detail: "Default WAN interfaces",
 			deviceNames: defaultRouteDeviceNames(interfaces),
 			default: true,
 		},
@@ -1185,19 +1185,28 @@ function trafficSourceOptionsFor(interfaces?: NetworkInterfaceStatus[]): Traffic
 			continue;
 		}
 
-		const deviceName = iface.l3_device || iface.device;
+		const l3Name = iface.l3_device;
+		const physName = iface.device;
 
-		if (!deviceName || deviceName === "lo" || seen.has(deviceName)) {
-			continue;
+		if (physName && physName !== "lo" && !seen.has(physName)) {
+			seen.add(physName);
+			options.push({
+				id: physName,
+				label: iface.interface && iface.interface !== physName ? `${physName} via ${iface.interface}` : physName,
+				detail: "Physical interface (Recommended)",
+				deviceNames: [physName],
+			});
 		}
 
-		seen.add(deviceName);
-		options.push({
-			id: deviceName,
-			label: iface.interface && iface.interface !== deviceName ? `${deviceName} via ${iface.interface}` : deviceName,
-			detail: iface.proto ? `${iface.proto} interface` : "WAN-like interface",
-			deviceNames: [deviceName],
-		});
+		if (l3Name && l3Name !== "lo" && l3Name !== physName && !seen.has(l3Name)) {
+			seen.add(l3Name);
+			options.push({
+				id: l3Name,
+				label: iface.interface && iface.interface !== l3Name ? `${l3Name} via ${iface.interface}` : l3Name,
+				detail: "Virtual interface (May bypass offloaded traffic)",
+				deviceNames: [l3Name],
+			});
+		}
 	}
 
 	return options;
@@ -1211,7 +1220,10 @@ function defaultRouteDeviceNames(interfaces?: NetworkInterfaceStatus[]) {
 			continue;
 		}
 
-		const deviceName = iface.l3_device || iface.device;
+		// Prefer physical device (iface.device) because hardware/software 
+		// flow offloading bypasses virtual L3 devices (like pppoe-wan),
+		// which results in inaccurate traffic statistics.
+		const deviceName = iface.device || iface.l3_device;
 
 		if (deviceName && deviceName !== "lo") {
 			names.add(deviceName);
