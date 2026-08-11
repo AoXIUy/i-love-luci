@@ -44,7 +44,7 @@ describe("App login mode", () => {
 	it("renders only the React login shell without the app header, menu, or compat frame", () => {
 		const markup = renderAppLogin();
 
-		expect(markup).toContain("I Love LuCI");
+		expect(markup).toContain("JT-COM Logo");
 		expect(markup).toContain('name="luci_username"');
 		expect(markup).toContain('name="luci_password"');
 		expect(markup).not.toContain("Open navigation");

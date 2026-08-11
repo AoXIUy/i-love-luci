@@ -29,14 +29,9 @@ export function LoginForm() {
 	return (
 		<Card className="w-full max-w-sm shadow-sm">
 			<CardContent className="p-6">
-				<div className="mb-6 flex items-center gap-3">
-					<div className="grid size-10 place-items-center rounded-lg bg-primary text-primary-foreground">
-						<ShieldCheck className="size-5" />
-					</div>
-					<div>
-						<h1 className="text-xl font-semibold">I Love LuCI</h1>
-						<p className="text-sm text-muted-foreground">Router administration</p>
-					</div>
+				<div className="mb-6 flex flex-col gap-2">
+					<img src="/logo.png" alt="JT-COM Logo" className="h-10 w-auto object-contain self-start dark:brightness-110" />
+					<p className="text-xs text-muted-foreground">Router administration</p>
 				</div>
 
 				{config.loginFailed ? (

@@ -51,7 +51,7 @@ describe("LoginForm", () => {
 	it("keeps the modern login copy and no reset button", () => {
 		const markup = renderLogin();
 
-		expect(markup).toContain("I Love LuCI");
+		expect(markup).toContain("JT-COM Logo");
 		expect(markup).toContain("Router administration");
 		expect(markup).toContain("Log in");
 		expect(markup).not.toContain("Authorization Required");
