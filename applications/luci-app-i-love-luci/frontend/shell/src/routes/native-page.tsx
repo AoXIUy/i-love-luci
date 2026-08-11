@@ -3339,7 +3339,6 @@ function PackageInventory({ data }: { data: NativePageData }) {
 	}
 
 	return (
-	return (
 		<div className="grid gap-4">
 			<div className="grid gap-3 sm:grid-cols-3">
 				<MetricBlock label={t("Installed packages")} value={packages.length} />
