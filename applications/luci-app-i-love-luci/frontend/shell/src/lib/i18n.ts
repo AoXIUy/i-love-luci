@@ -128,14 +128,28 @@ const dict: Record<string, string> = {
 	"Route mode saved": "路由渲染模式已保存",
 	"Route mode was not saved": "路由渲染模式保存失败",
 	"Router shell configuration and security options.": "路由器外壳配置与安全性选项。",
-	"Route": "路由",
 	"supported": "已原生支持",
-	"compat": "兼容兼容模式",
+	"compat": "兼容模式",
 	"unsupported": "暂未支持",
 	"auto": "自动判断 (推荐)",
 	"modern": "React 原生渲染",
 	"legacy": "LuCI 兼容框",
-	"hidden": "隐藏此路由"
+	"hidden": "隐藏此路由",
+
+	// Additional Dashboard terms
+	"Connections": "连接数",
+	"Active Connections": "当前连接数",
+	"Collecting connection data...": "正在采集连接数数据...",
+	"max": "上限",
+	"leases": "个租约",
+	"sensors": "个传感器",
+	"devices": "个设备",
+	"Read": "读取",
+	"Write": "写入",
+	"Source": "数据源",
+	"Polls every": "刷新间隔",
+	"Collecting thermal data...": "正在采集温度数据...",
+	"Collecting disk I/O data...": "正在采集磁盘 I/O 数据..."
 };
 
 export function getLanguagePreference(): "zh" | "en" {
