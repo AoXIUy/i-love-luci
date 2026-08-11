@@ -198,6 +198,26 @@ export type WirelessAssociation = {
 	inactive?: number;
 };
 
+
+export type ThermalZone = {
+	type: string;
+	tempC: number;
+};
+
+export type DiskStatEntry = {
+	device: string;
+	readBytes: number;
+	writeBytes: number;
+};
+
+export type SystemEvent = {
+	timeStr: string;
+	source: string;
+	message: string;
+	level: "info" | "warning" | "error";
+	timestamp: number;
+};
+
 export type DashboardStatus = {
 	collectedAt?: number;
 	board: BoardInfo;
@@ -206,7 +226,10 @@ export type DashboardStatus = {
 	devices: Record<string, DeviceStatus>;
 	dhcpLeases?: DhcpLease[];
 	wirelessAssociations?: WirelessAssociation[];
+	thermalZones?: ThermalZone[];
+	diskStats?: DiskStatEntry[];
 };
+
 
 export type ConfigValue = string | number | boolean | Array<string | number | boolean>;
 
@@ -1796,6 +1819,16 @@ export async function getDashboardStatus(): Promise<DashboardStatus> {
 	}
 	catch {
 		return fallbackDashboard;
+	}
+}
+
+export async function getSystemEvents(limit = 50): Promise<SystemEvent[]> {
+	try {
+		const data = await callBridge<{ events?: SystemEvent[] }>("system_events", { limit });
+		return data.events ?? [];
+	}
+	catch {
+		return [];
 	}
 }
 

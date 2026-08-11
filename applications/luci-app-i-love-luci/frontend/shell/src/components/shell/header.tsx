@@ -1,10 +1,10 @@
-import { Bell, LogOut, Menu, SquareTerminal } from "lucide-react";
+import { LogOut, Menu, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
 import { HeaderSearch } from "@/components/shell/header-search";
-import { Badge } from "@/components/ui/badge";
+import { NotificationCenter } from "@/components/shell/notification-center";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import {
@@ -104,10 +104,7 @@ export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
 						{pending} pending
 					</button>
 				) : null}
-				<Badge className="hidden sm:inline-flex">
-					<Bell className="mr-1 size-3.5" />
-					Idle
-				</Badge>
+				<NotificationCenter />
 				<Button
 					size="icon"
 					variant="outline"

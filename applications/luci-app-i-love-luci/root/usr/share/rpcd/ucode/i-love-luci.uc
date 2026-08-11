@@ -769,6 +769,157 @@ function fast_service_state(name) {
 	};
 }
 
+function read_thermal_zones() {
+	let zones = [];
+
+	for (let path in glob('/sys/class/thermal/thermal_zone*/temp')) {
+		try {
+			let tempRaw = trim(readfile(path));
+			if (!length(tempRaw))
+				continue;
+
+			let tempMilliC = int(tempRaw);
+
+			// 忽略无效读数：0 度或超过 150 度（通常是调试占位值）
+			if (tempMilliC <= 0 || tempMilliC > 150000)
+				continue;
+
+			let typeFile = replace(path, /temp$/, 'type');
+			let zoneType = trim(readfile(typeFile) || 'unknown');
+
+			push(zones, {
+				type: zoneType,
+				tempC: tempMilliC / 1000
+			});
+		}
+		catch (e) {
+			// 忽略无法读取的传感器
+		}
+	}
+
+	// 去重：相同 type 只保留温度最高的
+	let seen = {};
+	let unique = [];
+
+	for (let zone in zones) {
+		if (!seen[zone.type] || zone.tempC > seen[zone.type]) {
+			seen[zone.type] = zone.tempC;
+		}
+	}
+
+	for (let zoneType in seen) {
+		push(unique, { type: zoneType, tempC: seen[zoneType] });
+	}
+
+	return unique;
+}
+
+function read_disk_stats() {
+	let stats = [];
+
+	try {
+		let content = readfile('/proc/diskstats');
+
+		if (!length(content))
+			return stats;
+
+		for (let line in split(content, '\n')) {
+			line = trim(line);
+
+			if (!length(line))
+				continue;
+
+			let parts = split(line, /\s+/);
+
+			if (length(parts) < 14)
+				continue;
+
+			let device = parts[2];
+
+			// 仅保留物理磁盘：mmcblk(N)、sd(X)、nvme(N)n(N)、vd(X)
+			// 排除分区（mmcblkNpN、sdaN、nvme0n1pN）和 loop 设备
+			if (!match(device, /^(mmcblk[0-9]+|sd[a-z]|nvme[0-9]+n[0-9]+|vd[a-z]|hd[a-z])$/))
+				continue;
+
+			// 字段索引：3=读次数 5=读扇区数 7=写次数 9=写扇区数（每扇区 512B）
+			let readSectors  = int(parts[5]);
+			let writeSectors = int(parts[9]);
+
+			push(stats, {
+				device,
+				readBytes:  readSectors  * 512,
+				writeBytes: writeSectors * 512
+			});
+		}
+	}
+	catch (e) {
+		// /proc/diskstats 不可用时返回空数组
+	}
+
+	return stats;
+}
+
+function read_system_events(limit) {
+	limit = limit || 50;
+	let events = [];
+
+	try {
+		// 使用 logread 读取最近的系统日志，解析 syslog 格式
+		let output = trim(shell_output(`logread -l ${int(limit) + 20} 2>/dev/null`));
+
+		if (!length(output))
+			return events;
+
+		for (let line in split(output, '\n')) {
+			line = trim(line);
+
+			if (!length(line))
+				continue;
+
+			// syslog 格式：Mon DD HH:MM:SS hostname daemon[pid]: message
+			// 提取时间戳、来源、消息
+			let m = match(line, /^(\w+\s+\d+\s+\d+:\d+:\d+)\s+\S+\s+(\S+?)(?:\[\d+\])?:\s+(.+)$/);
+
+			if (!m)
+				continue;
+
+			let timeStr = m[1];
+			let source  = m[2];
+			let message = m[3];
+
+			// 简单级别推断
+			let level = 'info';
+			let msgLower = lc(message);
+
+			if (match(msgLower, /error|failed|fail|critical|fatal|panic|oops/))
+				level = 'error';
+			else if (match(msgLower, /warn|warning|could not|unable|timeout|denied/))
+				level = 'warning';
+
+			// 过滤掉太频繁的无意义日志行
+			if (match(source, /^(crond|ntpd)$/) && level == 'info')
+				continue;
+
+			push(events, {
+				timeStr,
+				source,
+				message,
+				level,
+				timestamp: time()
+			});
+		}
+
+		// 最多返回 limit 条，取最新的
+		if (length(events) > limit)
+			events = slice(events, length(events) - limit);
+	}
+	catch (e) {
+		// logread 不可用时返回空数组
+	}
+
+	return events;
+}
+
 function dhcp_leases() {
 	let leases = [];
 	let text = trim(shell_output(`awk '{ r=$1-systime(); if (r < 0) r=0; h=($4=="*" ? "" : $4); c=($5=="*" ? "" : $5); print r "\\t" $2 "\\t" $3 "\\t" h "\\t" c }' /tmp/dhcp.leases 2>/dev/null`));
@@ -10234,7 +10385,21 @@ const methods = {
 				interfaces: interfaces.interface || [],
 				devices: ubus.call('network.device', 'status') || {},
 				dhcpLeases: dhcp_leases(),
-				wirelessAssociations: wireless_associations()
+				wirelessAssociations: wireless_associations(),
+				thermalZones: read_thermal_zones(),
+				diskStats: read_disk_stats()
+			});
+		}
+	},
+
+	system_events: {
+		args: {
+			limit: 50
+		},
+		call: function(request) {
+			const limit = int(request.args.limit) || 50;
+			return respond({
+				events: read_system_events(limit)
 			});
 		}
 	},

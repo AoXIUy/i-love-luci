@@ -11,7 +11,7 @@ import {
 	Tooltip,
 } from "chart.js";
 import type { ChartData, ChartOptions } from "chart.js";
-import { Activity, Cpu, HardDrive, MemoryStick, Network, Wifi } from "lucide-react";
+import { Activity, Cpu, HardDrive, MemoryStick, Network, Thermometer, Wifi } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bar, Doughnut, Line } from "react-chartjs-2";
@@ -24,7 +24,9 @@ import {
 	type DashboardStatus,
 	type DeviceStatus,
 	type DhcpLease,
+	type DiskStatEntry,
 	type NetworkInterfaceStatus,
+	type ThermalZone,
 	type WirelessAssociation,
 } from "@/lib/rpc";
 
@@ -46,6 +48,16 @@ type BandwidthSample = {
 	txMbps: number;
 	load: number;
 	memory: number;
+	diskReadMBps: number;
+	diskWriteMBps: number;
+	maxTempC: number;
+};
+
+// 接口速率迷你趋势线（最近 10 个采样点）
+type DeviceSparkline = {
+	name: string;
+	rxHistory: number[];
+	txHistory: number[];
 };
 
 type DeviceRate = {
@@ -188,12 +200,14 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 	const [status, setStatus] = useState<DashboardStatus>(emptyStatus);
 	const [samples, setSamples] = useState<BandwidthSample[]>([]);
 	const [rates, setRates] = useState<DeviceRate[]>([]);
+	const [sparklines, setSparklines] = useState<DeviceSparkline[]>([]);
 	const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [pollIntervalMs, setPollIntervalMs] = useState(defaultPollIntervalMs);
 	const [trafficSourceId, setTrafficSourceId] = useState(readTrafficSourcePreference);
 	const previousStatus = useRef<DashboardStatus | null>(null);
 	const previousTime = useRef<number | null>(null);
+	const previousDiskStats = useRef<DiskStatEntry[] | null>(null);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -216,6 +230,20 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 				{ rxMbps: 0, txMbps: 0 },
 			);
 
+			// 磁盘 I/O delta 计算
+			const elapsedSeconds = previousTime.current ? Math.max(1, (now - previousTime.current) / 1000) : 0;
+			const { diskReadMBps, diskWriteMBps } = computeDiskRates(
+				nextStatus.diskStats ?? [],
+				previousDiskStats.current,
+				elapsedSeconds,
+			);
+
+			// 温度：取所有 zone 中最高值
+			const maxTempC = (nextStatus.thermalZones ?? []).reduce(
+				(max, z) => Math.max(max, z.tempC),
+				0,
+			);
+
 			setStatus(nextStatus);
 			setRates(nextRates);
 			setUpdatedAt(new Date(now));
@@ -228,11 +256,29 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 					txMbps: totals.txMbps,
 					load: normaliseLoad(nextStatus.system.load?.[0]),
 					memory: memoryUsage(nextStatus).percent,
+					diskReadMBps,
+					diskWriteMBps,
+					maxTempC,
 				},
 			]);
 
+			// 更新接口 sparkline 历史（最多保留 10 个点）
+			setSparklines((prev) => {
+				const map = new Map(prev.map((s) => [s.name, s]));
+				for (const rate of nextRates) {
+					const existing = map.get(rate.name);
+					map.set(rate.name, {
+						name: rate.name,
+						rxHistory: [...(existing?.rxHistory ?? []).slice(-9), rate.rxMbps],
+						txHistory: [...(existing?.txHistory ?? []).slice(-9), rate.txMbps],
+					});
+				}
+				return [...map.values()];
+			});
+
 			previousStatus.current = nextStatus;
 			previousTime.current = now;
+			previousDiskStats.current = nextStatus.diskStats ?? null;
 		}
 
 		void refresh();
@@ -352,12 +398,20 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 				</div>
 			</div>
 
-			<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+			<div className={`grid gap-3 sm:grid-cols-2 ${(status.thermalZones ?? []).length > 0 ? 'xl:grid-cols-6' : 'xl:grid-cols-5'}`}>
 				<MetricCard icon={Network} label="Download" value={formatMbps(totalRx)} detail={trafficDetail} />
 				<MetricCard icon={Activity} label="Upload" value={formatMbps(totalTx)} detail={trafficDetail} />
 				<MetricCard icon={MemoryStick} label="Memory" value={`${memory.percent.toFixed(0)}%`} detail={formatBytes(memory.used)} />
 				<MetricCard icon={HardDrive} label="Disk" value={`${root.percent.toFixed(0)}%`} detail="root filesystem used" />
 				<MetricCard icon={Cpu} label="CPU load" value={load1.toFixed(2)} detail="1 minute average" />
+				{(status.thermalZones ?? []).length > 0 && (
+					<MetricCard
+						icon={Thermometer}
+						label="Temperature"
+						value={`${(samples[samples.length - 1]?.maxTempC ?? 0).toFixed(1)}°C`}
+						detail={`${(status.thermalZones ?? []).length} sensor${(status.thermalZones ?? []).length > 1 ? 's' : ''}`}
+					/>
+				)}
 			</div>
 
 			<div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(22rem,1fr)]">
@@ -499,6 +553,7 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 										<th className="px-4 py-3 text-right font-medium">Download</th>
 										<th className="px-4 py-3 text-right font-medium">Upload</th>
 										<th className="px-4 py-3 text-right font-medium">Transferred</th>
+										<th className="px-4 py-3 text-right font-medium">Trend</th>
 									</tr>
 								</thead>
 								<tbody>
@@ -517,11 +572,22 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 												<td className="px-4 py-3 text-right text-muted-foreground">
 													{formatBytes(device.rxBytes + device.txBytes)}
 												</td>
+												<td className="px-4 py-3 text-right">
+													{(() => {
+														const sl = sparklines.find((s) => s.name === device.name);
+														return sl ? (
+															<div className="inline-flex flex-col items-end gap-0.5">
+																<Sparkline color="#0f766e" data={sl.rxHistory} />
+																<Sparkline color="#2563eb" data={sl.txHistory} />
+															</div>
+														) : <span className="text-muted-foreground text-xs">—</span>;
+													})()}
+												</td>
 											</tr>
 										))
 									) : (
 										<tr>
-											<td className="px-4 py-6 text-muted-foreground" colSpan={6}>
+											<td className="px-4 py-6 text-muted-foreground" colSpan={7}>
 												No active network devices reported by LuCI.
 											</td>
 										</tr>
@@ -546,6 +612,14 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 					</CardContent>
 				</Card>
 			</div>
+
+			{/* 温度传感器折线图（仅当路由器有温度传感器时显示） */}
+			{(status.thermalZones ?? []).length > 0 && (
+				<ThermalCard samples={samples} zones={status.thermalZones ?? []} />
+			)}
+
+			{/* 磁盘 I/O 速率折线图 */}
+			<DiskIOCard samples={samples} />
 		</div>
 	);
 }
@@ -711,6 +785,230 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 function EmptyChartLabel({ label }: { label: string }) {
 	return <div className="grid h-full place-items-center text-sm text-muted-foreground">{label}</div>;
+}
+
+// ─── 磁盘 I/O 速率计算 ───────────────────────────────────────────────────────
+
+function computeDiskRates(
+	current: DiskStatEntry[],
+	previous: DiskStatEntry[] | null,
+	elapsedSeconds: number,
+): { diskReadMBps: number; diskWriteMBps: number } {
+	if (!previous || elapsedSeconds <= 0) {
+		return { diskReadMBps: 0, diskWriteMBps: 0 };
+	}
+
+	const prevMap = new Map(previous.map((d) => [d.device, d]));
+	let totalReadDelta = 0;
+	let totalWriteDelta = 0;
+
+	for (const cur of current) {
+		const prev = prevMap.get(cur.device);
+		if (!prev) continue;
+		totalReadDelta += Math.max(0, cur.readBytes - prev.readBytes);
+		totalWriteDelta += Math.max(0, cur.writeBytes - prev.writeBytes);
+	}
+
+	return {
+		diskReadMBps: totalReadDelta / elapsedSeconds / 1_048_576,
+		diskWriteMBps: totalWriteDelta / elapsedSeconds / 1_048_576,
+	};
+}
+
+// ─── 迷你趋势线 SVG 组件 ─────────────────────────────────────────────────────
+
+function Sparkline({ data, color = "#0f766e" }: { data: number[]; color?: string }) {
+	if (data.length < 2) {
+		return <span className="text-xs text-muted-foreground">—</span>;
+	}
+
+	const width = 48;
+	const height = 18;
+	const max = Math.max(...data, 0.001);
+	const points = data
+		.map((v, i) => {
+			const x = (i / (data.length - 1)) * width;
+			const y = height - (v / max) * height;
+			return `${x},${y}`;
+		})
+		.join(" ");
+
+	return (
+		<svg
+			aria-hidden="true"
+			height={height}
+			viewBox={`0 0 ${width} ${height}`}
+			width={width}
+			xmlns="http://www.w3.org/2000/svg"
+		>
+			<polyline
+				fill="none"
+				points={points}
+				stroke={color}
+				strokeLinejoin="round"
+				strokeWidth="1.5"
+			/>
+		</svg>
+	);
+}
+
+// ─── 温度传感器折线图卡片 ─────────────────────────────────────────────────────
+
+const thermalLineOptions: ChartOptions<"line"> = {
+	responsive: true,
+	maintainAspectRatio: false,
+	interaction: { intersect: false, mode: "index" },
+	plugins: {
+		legend: {
+			position: "bottom",
+			labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true },
+		},
+		tooltip: {
+			callbacks: {
+				label: (item) => `${item.dataset.label}: ${Number(item.raw).toFixed(1)}°C`,
+			},
+		},
+	},
+	scales: {
+		x: { grid: { display: false } },
+		y: {
+			beginAtZero: false,
+			ticks: { callback: (v) => `${Number(v).toFixed(0)}°C` },
+		},
+	},
+};
+
+function ThermalCard({
+	samples,
+	zones,
+}: {
+	samples: BandwidthSample[];
+	zones: ThermalZone[];
+}) {
+	const THERMAL_COLORS = ["#f97316", "#ef4444", "#eab308", "#22c55e", "#3b82f6"];
+
+	const thermalData = useMemo<ChartData<"line">>(
+		() => ({
+			labels: samples.map((s) => s.label),
+			datasets: zones.slice(0, 5).map((zone, i) => ({
+				label: zone.type,
+				// 每个采样点的最高温度来自 maxTempC（仅展示总体趋势）
+				data: samples.map((s) => s.maxTempC),
+				borderColor: THERMAL_COLORS[i % THERMAL_COLORS.length],
+				backgroundColor: `${THERMAL_COLORS[i % THERMAL_COLORS.length]}18`,
+				fill: false,
+				tension: 0.35,
+				pointRadius: 0,
+				pointHoverRadius: 3,
+			})),
+		}),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[samples, zones],
+	);
+
+	const latestTemp = samples[samples.length - 1]?.maxTempC ?? 0;
+
+	return (
+		<Card>
+			<CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+				<CardTitle>Temperature</CardTitle>
+				<span className="text-sm text-muted-foreground">
+					Peak: {latestTemp.toFixed(1)}°C · {zones.length} sensor{zones.length > 1 ? "s" : ""}
+				</span>
+			</CardHeader>
+			<CardContent>
+				<div className="h-48">
+					{samples.length < 2 ? (
+						<EmptyChartLabel label="Collecting thermal data..." />
+					) : (
+						<Line data={thermalData} options={thermalLineOptions} />
+					)}
+				</div>
+			</CardContent>
+		</Card>
+	);
+}
+
+// ─── 磁盘 I/O 速率折线图卡片 ──────────────────────────────────────────────────
+
+const diskLineOptions: ChartOptions<"line"> = {
+	responsive: true,
+	maintainAspectRatio: false,
+	interaction: { intersect: false, mode: "index" },
+	plugins: {
+		legend: {
+			position: "bottom",
+			labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true },
+		},
+		tooltip: {
+			callbacks: {
+				label: (item) =>
+					`${item.dataset.label}: ${Number(item.raw).toFixed(2)} MB/s`,
+			},
+		},
+	},
+	scales: {
+		x: { grid: { display: false } },
+		y: {
+			beginAtZero: true,
+			ticks: { callback: (v) => `${Number(v).toFixed(1)} MB/s` },
+		},
+	},
+};
+
+function DiskIOCard({ samples }: { samples: BandwidthSample[] }) {
+	const diskData = useMemo<ChartData<"line">>(
+		() => ({
+			labels: samples.map((s) => s.label),
+			datasets: [
+				{
+					label: "Read",
+					data: samples.map((s) => s.diskReadMBps),
+					borderColor: "#7c3aed",
+					backgroundColor: "rgb(124 58 237 / 0.10)",
+					fill: true,
+					tension: 0.35,
+					pointRadius: 0,
+					pointHoverRadius: 3,
+				},
+				{
+					label: "Write",
+					data: samples.map((s) => s.diskWriteMBps),
+					borderColor: "#db2777",
+					backgroundColor: "rgb(219 39 119 / 0.08)",
+					fill: true,
+					tension: 0.35,
+					pointRadius: 0,
+					pointHoverRadius: 3,
+				},
+			],
+		}),
+		[samples],
+	);
+
+	// 如果始终没有磁盘 I/O 数据，不渲染卡片
+	const hasData = samples.some((s) => s.diskReadMBps > 0 || s.diskWriteMBps > 0);
+
+	if (!hasData && samples.length > 3) {
+		return null;
+	}
+
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle>Disk I/O</CardTitle>
+			</CardHeader>
+			<CardContent>
+				<div className="h-48">
+					{samples.length < 2 ? (
+						<EmptyChartLabel label="Collecting disk I/O data..." />
+					) : (
+						<Line data={diskData} options={diskLineOptions} />
+					)}
+				</div>
+			</CardContent>
+		</Card>
+	);
 }
 
 function computeRates(
