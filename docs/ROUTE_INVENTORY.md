@@ -9,7 +9,7 @@ This inventory records the current user-facing renderer decision for every visib
 | `/admin/status` | Status | Native | `/` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/status/overview` |
 | `/admin/system` | System | Native | `/core/system` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/system/system` |
 | `/admin/services` | Services | Native | `/native/services` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/services/banip` |
-| `/admin/network` | Network | LuCI compat | `/admin/network/network` | native parity not proven | LuCI compat primary | live menu audit | route; first child `/admin/network/network`; native adapter evidence retained; user route stays compat |
+| `/admin/network` | Network | Native | `/core/network` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/network/network` |
 | `/admin/status/overview` | Overview | Native | `/` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/system/system` | System | Native | `/core/system` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/system/admin` | Administration | Native | `/native/password` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/system/admin/password` |
@@ -18,28 +18,28 @@ This inventory records the current user-facing renderer decision for every visib
 | `/admin/status/logs` | System Log | Native | `/native/logs` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/status/logs/syslog` |
 | `/admin/status/processes` | Processes | Native | `/native/processes` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/status/realtime` | Realtime Graphs | Native | `/realtime` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/status/realtime/load` |
-| `/admin/network/network` | Interfaces | LuCI compat | `/admin/network/network` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
+| `/admin/network/network` | Interfaces | Native | `/core/network` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/network/routes` | Routing | Native | `/core/network-routes` | supported native | LuCI compat selectable | live menu audit | route |
-| `/admin/system/package-manager` | Software | LuCI compat | `/admin/system/package-manager` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
+| `/admin/system/package-manager` | Software | Native | `/native/packages` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/network/dhcp` | DHCP | Native | `/core/dhcp` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/network/dns` | DNS | Native | `/core/dhcp` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/system/startup` | Startup | Native | `/native/startup` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/system/crontab` | Scheduled Tasks | Native | `/native/crontab` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/network/diagnostics` | Diagnostics | Native | `/native/diagnostics` | supported native | LuCI compat selectable | live menu audit | route |
-| `/admin/system/attendedsysupgrade` | Attended Sysupgrade | LuCI compat | `/admin/system/attendedsysupgrade/overview` | native parity not proven | LuCI compat primary | live menu audit | route; first child `/admin/system/attendedsysupgrade/overview`; native adapter evidence retained; user route stays compat |
+| `/admin/system/attendedsysupgrade` | Attended Sysupgrade | Native | `/native/attendedsysupgrade` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/system/attendedsysupgrade/overview` |
 | `/admin/network/firewall` | Firewall | Native | `/core/firewall` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/network/firewall/zones` |
 | `/admin/system/leds` | LED Configuration | Native | `/native/leds` | supported native | LuCI compat selectable | live menu audit | route |
-| `/admin/services/banip` | banIP | LuCI compat | `/admin/services/banip/overview` | native parity not proven | LuCI compat primary | live menu audit | route; first child `/admin/services/banip/overview`; native adapter evidence retained; user route stays compat |
-| `/admin/system/flash` | Backup / Flash Firmware | LuCI compat | `/admin/system/flash` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
+| `/admin/services/banip` | banIP | Native | `/native/service/banip` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/services/banip/overview` |
+| `/admin/system/flash` | Backup / Flash Firmware | Native | `/native/flash` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/system/commands` | Custom Commands | Native | `/native/service/commands` | supported native | LuCI compat selectable | live menu audit | route; first child `/admin/system/commands/dashboard` |
 | `/admin/system/i-love-luci-theme` | I Love LuCI Theme | Native | `/settings` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/system/reboot` | Reboot | Native | `/native/reboot` | supported native | LuCI compat selectable | live menu audit | route |
-| `/admin/services/adblock-fast` | AdBlock Fast | LuCI compat | `/admin/services/adblock-fast` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
+| `/admin/services/adblock-fast` | AdBlock Fast | Native | `/native/service/adblock-fast` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/services/upnp` | UPnP IGD & PCP | Native | `/native/service/upnpd` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/services/uhttpd` | uHTTPd | Native | `/native/service/uhttpd` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/system/commands/dashboard` | Dashboard | Native | `/native/service/commands` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/status/realtime/load` | Load | Native | `/realtime` | supported native | LuCI compat selectable | live menu audit | route |
-| `/admin/system/attendedsysupgrade/overview` | Overview | LuCI compat | `/admin/system/attendedsysupgrade/overview` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
+| `/admin/system/attendedsysupgrade/overview` | Overview | Native | `/native/attendedsysupgrade` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/system/admin/password` | Router Password | Native | `/native/password` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/status/logs/syslog` | System Log | Native | `/native/logs` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/status/realtime/bandwidth` | Bandwidth | Native | `/realtime` | supported native | LuCI compat selectable | live menu audit | route |
@@ -52,14 +52,14 @@ This inventory records the current user-facing renderer decision for every visib
 | `/admin/system/admin/uhttpd` | HTTP(S) Access | Native | `/native/service/uhttpd` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/system/admin/repokeys` | Repo Public Keys | Native | `/native/repokeys` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/network/firewall/zones` | General Settings | Native | `/core/firewall` | supported native | LuCI compat selectable | live menu audit | route |
-| `/admin/services/banip/overview` | Overview | LuCI compat | `/admin/services/banip/overview` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
-| `/admin/services/banip/allowlist` | Edit Allowlist | LuCI compat | `/admin/services/banip/allowlist` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
+| `/admin/services/banip/overview` | Overview | Native | `/native/service/banip` | supported native | LuCI compat selectable | live menu audit | route |
+| `/admin/services/banip/allowlist` | Edit Allowlist | Native | `/native/service/banip/allowlist` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/network/firewall/forwards` | Port Forwards | Native | `/core/firewall` | supported native | LuCI compat selectable | live menu audit | route |
-| `/admin/services/banip/blocklist` | Edit Blocklist | LuCI compat | `/admin/services/banip/blocklist` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
+| `/admin/services/banip/blocklist` | Edit Blocklist | Native | `/native/service/banip/blocklist` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/network/firewall/rules` | Traffic Rules | Native | `/core/firewall` | supported native | LuCI compat selectable | live menu audit | route |
-| `/admin/services/banip/feeds` | Custom Feed Editor | LuCI compat | `/admin/services/banip/feeds` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
+| `/admin/services/banip/feeds` | Custom Feed Editor | Native | `/native/service/banip/feeds` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/network/firewall/snats` | NAT Rules | Native | `/core/firewall` | supported native | LuCI compat selectable | live menu audit | route |
 | `/admin/network/firewall/ipsets` | IP Sets | Native | `/core/firewall` | supported native | LuCI compat selectable | live menu audit | route |
-| `/admin/services/banip/setreport` | Set Reporting | LuCI compat | `/admin/services/banip/setreport` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
-| `/admin/services/banip/firewall_log` | Firewall Log | LuCI compat | `/admin/services/banip/firewall_log` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
-| `/admin/services/banip/processing_log` | Processing Log | LuCI compat | `/admin/services/banip/processing_log` | native parity not proven | LuCI compat primary | live menu audit | route; native adapter evidence retained; user route stays compat |
+| `/admin/services/banip/setreport` | Set Reporting | Native | `/native/service/banip/setreport` | supported native | LuCI compat selectable | live menu audit | route |
+| `/admin/services/banip/firewall_log` | Firewall Log | Native | `/native/service/banip/firewall_log` | supported native | LuCI compat selectable | live menu audit | route |
+| `/admin/services/banip/processing_log` | Processing Log | Native | `/native/service/banip/processing_log` | supported native | LuCI compat selectable | live menu audit | route |

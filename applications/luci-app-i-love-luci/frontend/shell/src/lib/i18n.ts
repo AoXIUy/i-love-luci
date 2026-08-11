@@ -6,7 +6,7 @@ const dict: Record<string, string> = {
 	"Services": "服务",
 	"Network": "网络",
 	"VPN": "VPN",
-	"Settings": "渲染设置",
+	"Settings": "设置",
 	"Router console": "路由器控制台",
 	"Log out": "退出登录",
 	"Signed in as": "当前登录用户为",
@@ -101,7 +101,6 @@ const dict: Record<string, string> = {
 	"Interface": "接口",
 	"Signal": "信号强度",
 	"Rate": "协商速率",
-	"Connected": "连接时间",
 	"down": "下载",
 	"up": "上传",
 

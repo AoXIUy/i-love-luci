@@ -3,13 +3,10 @@ import { describe, expect, it } from "vitest";
 import { nativePageCompatPath, serviceCompatPath } from "@/lib/service-compat";
 
 describe("serviceCompatPath", () => {
-	it("keeps third-party LuCI apps on compatibility routes", () => {
-		expect(serviceCompatPath("adblock-fast")).toBe("/admin/services/adblock-fast");
-		expect(serviceCompatPath("banip")).toBe("/admin/services/banip");
-		expect(serviceCompatPath("banip", "allowlist")).toBe("/admin/services/banip/allowlist");
-	});
-
-	it("allows approved native service routes", () => {
+	it("allows approved native service routes including previously compat-only ones", () => {
+		expect(serviceCompatPath("adblock-fast")).toBeNull();
+		expect(serviceCompatPath("banip")).toBeNull();
+		expect(serviceCompatPath("banip", "allowlist")).toBeNull();
 		expect(serviceCompatPath("uhttpd")).toBeNull();
 		expect(serviceCompatPath("upnpd")).toBeNull();
 		expect(serviceCompatPath("commands")).toBeNull();
@@ -17,13 +14,10 @@ describe("serviceCompatPath", () => {
 });
 
 describe("nativePageCompatPath", () => {
-	it("redirects compat-only native page aliases to full LuCI routes", () => {
-		expect(nativePageCompatPath("attendedsysupgrade")).toBe("/admin/system/attendedsysupgrade/overview");
-		expect(nativePageCompatPath("flash")).toBe("/admin/system/flash");
-		expect(nativePageCompatPath("packages")).toBe("/admin/system/package-manager");
-	});
-
-	it("allows supported native page routes", () => {
+	it("allows supported native page routes including previously compat-only ones", () => {
+		expect(nativePageCompatPath("attendedsysupgrade")).toBeNull();
+		expect(nativePageCompatPath("flash")).toBeNull();
+		expect(nativePageCompatPath("packages")).toBeNull();
 		expect(nativePageCompatPath("attendedsysupgrade-config")).toBeNull();
 		expect(nativePageCompatPath("status-routes")).toBeNull();
 		expect(nativePageCompatPath("logs")).toBeNull();

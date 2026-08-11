@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -74,10 +74,8 @@ import {
 	type SystemSettingsInput,
 	type UhttpdCertDefaultsInput,
 } from "@/lib/rpc";
-import { legacyTarget } from "@/lib/service-compat";
 
 type CorePage = "network" | "network-routes" | "dhcp" | "firewall" | "system";
-const exposeNetworkAdapterEvidence = false;
 
 type PendingStaticHost = {
 	host: DhcpHost;
@@ -115,10 +113,6 @@ const pageMeta: Record<CorePage, { title: string; description: string; configKey
 export function CoreSettingsPage() {
 	const params = useParams();
 	const page = normalizePage(params.page);
-
-	if (page === "network") {
-		return <Navigate replace to={legacyTarget("/admin/network/network")} />;
-	}
 
 	return <CoreSettingsContent page={page} />;
 }
@@ -163,10 +157,8 @@ function CoreSettingsContent({ page }: { page: CorePage }) {
 			</header>
 
 			{page === "network" && settings ? <NetworkInterfacesSummary dashboard={dashboard} settings={settings} /> : null}
+			{page === "network" && settings ? <NetworkSummary dashboard={dashboard} onSettingsChange={setSettings} settings={settings} /> : null}
 			{page === "network-routes" && settings ? <NetworkRoutesSummary onSettingsChange={setSettings} settings={settings} /> : null}
-			{page === "network-routes" && exposeNetworkAdapterEvidence && settings ? (
-				<NetworkSummary dashboard={dashboard} onSettingsChange={setSettings} settings={settings} />
-			) : null}
 			{page === "dhcp" && settings ? <DhcpSummary onSettingsChange={setSettings} settings={settings} /> : null}
 			{page === "firewall" && settings ? <FirewallSummary onSettingsChange={setSettings} settings={settings} /> : null}
 			{page === "system" && settings ? <SystemSummary settings={settings} dashboard={dashboard} /> : null}
