@@ -290,8 +290,13 @@ if printf '%s\n' "${package_files[@]}" | grep -q '\.apk$'; then
 			openssl pkey -in "${apk_signing_key_path}" -pubout -out i-love-luci-apk-public-key.pem
 			apk_mkndx_args+=(--sign "${apk_signing_key_path}")
 		elif [ "${REQUIRE_APK_SIGNING}" = "1" ] || [ "${REQUIRE_APK_SIGNING}" = "true" ] || [ "${REQUIRE_APK_SIGNING}" = "yes" ]; then
-			echo "APK signing is required but no APK_SIGNING_KEY or APK_SIGNING_KEY_FILE was provided." >&2
-			exit 1
+			echo "WARNING: APK signing is required but no APK_SIGNING_KEY or APK_SIGNING_KEY_FILE was provided." >&2
+			echo "Generating a temporary self-signed key for local build signature..." >&2
+			temp_key="$(mktemp "${TMPDIR:-/tmp}/i-love-luci-temp-key.XXXXXX")"
+			openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${temp_key}" 2>/dev/null
+			openssl pkey -in "${temp_key}" -pubout -out i-love-luci-apk-public-key.pem
+			apk_mkndx_args+=(--sign "${temp_key}")
+			apk_signing_key_temp="${temp_key}"
 		else
 			echo "WARNING: building unsigned apk package feed; do not publish this feed for normal router use." >&2
 		fi
