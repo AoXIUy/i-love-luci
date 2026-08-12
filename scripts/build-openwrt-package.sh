@@ -127,7 +127,7 @@ for i in "${!package_names[@]}"; do
 				(
 					cd "${package_dirs[$i]}/frontend/shell"
 					if [ -f package-lock.json ]; then
-						npm ci
+						npm install
 					else
 						npm install
 					fi
