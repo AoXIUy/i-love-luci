@@ -147,12 +147,18 @@ export function ConsolePage() {
 						</p>
 					</div>
 				</div>
-				<div className="flex flex-col items-center justify-center gap-4 rounded-md border bg-black/5 py-16 text-center">
-					<SquareTerminal className="size-10 text-muted-foreground" />
-					<p className="text-sm text-muted-foreground">{t("Open the console to start a session.")}</p>
-					<Button onClick={addTab} type="button">
+				<div className="relative flex flex-col items-center justify-center gap-5 rounded-xl border bg-gradient-to-b from-black/5 to-transparent py-20 text-center overflow-hidden">
+					<div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/10 via-transparent to-transparent opacity-50"></div>
+					<div className="relative grid size-16 place-items-center rounded-2xl bg-black/5 shadow-inner ring-1 ring-black/10">
+						<SquareTerminal className="size-8 text-primary/80" />
+					</div>
+					<div className="relative z-10 space-y-1">
+						<h3 className="text-lg font-medium">{t("No active sessions")}</h3>
+						<p className="text-sm text-muted-foreground">{t("Open the console to start a new command line session.")}</p>
+					</div>
+					<Button onClick={addTab} type="button" className="relative z-10 shadow-lg hover:shadow-primary/25 transition-all duration-300">
 						<Plus className="mr-2 size-4" />
-						{t("Open console")}
+						{t("Launch Terminal")}
 					</Button>
 				</div>
 			</div>

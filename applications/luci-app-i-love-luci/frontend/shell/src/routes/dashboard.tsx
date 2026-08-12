@@ -327,7 +327,15 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 					label: t("Download"),
 					data: samples.map((sample) => sample.rxMbps),
 					borderColor: "#0f766e",
-					backgroundColor: "rgb(15 118 110 / 0.12)",
+					backgroundColor: (context: any) => {
+						const chart = context.chart;
+						const { ctx, chartArea } = chart;
+						if (!chartArea) return "rgba(15, 118, 110, 0.12)";
+						const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+						gradient.addColorStop(0, "rgba(15, 118, 110, 0.3)");
+						gradient.addColorStop(1, "rgba(15, 118, 110, 0)");
+						return gradient;
+					},
 					fill: true,
 					tension: 0.35,
 					pointRadius: 0,
@@ -337,7 +345,15 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 					label: t("Upload"),
 					data: samples.map((sample) => sample.txMbps),
 					borderColor: "#2563eb",
-					backgroundColor: "rgb(37 99 235 / 0.08)",
+					backgroundColor: (context: any) => {
+						const chart = context.chart;
+						const { ctx, chartArea } = chart;
+						if (!chartArea) return "rgba(37, 99, 235, 0.08)";
+						const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+						gradient.addColorStop(0, "rgba(37, 99, 235, 0.2)");
+						gradient.addColorStop(1, "rgba(37, 99, 235, 0)");
+						return gradient;
+					},
 					fill: true,
 					tension: 0.35,
 					pointRadius: 0,
@@ -660,7 +676,7 @@ function MetricCard({
 	value: string;
 }) {
 	return (
-		<Card>
+		<Card className="transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
 			<CardContent className="flex items-center justify-between gap-3 p-4">
 				<div className="min-w-0">
 					<p className="text-sm text-muted-foreground">{label}</p>

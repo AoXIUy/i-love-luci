@@ -5,6 +5,8 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getMenuTree, setRouteMode, type MenuItem } from "@/lib/rpc";
 import { coverageLabels, routeModeLabels, routeModeOptions, selectedRouteMode } from "@/lib/route-modes";
 import { t } from "@/lib/i18n";
@@ -100,42 +102,35 @@ export function SettingsPage() {
 							onChange={(event) => setRouteQuery(event.target.value)}
 						/>
 					</div>
-					<div className="overflow-x-auto rounded-md border">
-						<table className="w-full min-w-[48rem] text-left text-sm">
-							<thead className="border-b text-xs uppercase text-muted-foreground">
-								<tr>
-									<th className="px-3 py-2 font-medium">{t("Route")}</th>
-									<th className="px-3 py-2 font-medium">{t("Coverage")}</th>
-									<th className="px-3 py-2 font-medium">{t("Mode")}</th>
-								</tr>
-							</thead>
-							<tbody>
-								{visibleRoutes.map((route) => (
-									<tr className="border-b last:border-0" key={route.path}>
-										<td className="px-3 py-2">
-											<div className="font-medium">{t(route.title)}</div>
-											<div className="text-xs text-muted-foreground">{route.path}</div>
-										</td>
-										<td className="px-3 py-2 text-muted-foreground">
-											{t(coverageLabels[route.nativeStatus ?? "unsupported"])}
-										</td>
-										<td className="px-3 py-2">
-											<select
-												className="h-9 rounded-md border bg-card px-2 text-sm"
-												value={selectedRouteMode(route)}
-												onChange={(event) => void updateRouteMode(route, event.target.value as MenuItem["configuredMode"])}
-											>
-												{routeModeOptions(route).map((mode) => (
-													<option key={mode} value={mode}>
-														{t(routeModeLabels[mode])}
-													</option>
-												))}
-											</select>
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
+					<div className="grid gap-2 max-h-[60vh] overflow-y-auto pr-2">
+						{visibleRoutes.map((route) => (
+							<div key={route.path} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-md border hover:bg-muted/50 transition-colors">
+								<div>
+									<div className="font-medium">{t(route.title)}</div>
+									<div className="text-xs text-muted-foreground">{route.path}</div>
+								</div>
+								<div className="flex items-center gap-3">
+									<Badge variant="outline" className="hidden sm:inline-flex text-muted-foreground">
+										{t(coverageLabels[route.nativeStatus ?? "unsupported"])}
+									</Badge>
+									<Select
+										value={selectedRouteMode(route)}
+										onValueChange={(value) => void updateRouteMode(route, value as MenuItem["configuredMode"])}
+									>
+										<SelectTrigger className="w-[140px] h-8 text-xs bg-background">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											{routeModeOptions(route).map((mode) => (
+												<SelectItem key={mode} value={mode} className="text-xs">
+													{t(routeModeLabels[mode])}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+							</div>
+						))}
 					</div>
 				</CardContent>
 			</Card>
