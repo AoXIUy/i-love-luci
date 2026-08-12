@@ -110,7 +110,7 @@ export function SettingsPage() {
 									<div className="text-xs text-muted-foreground">{route.path}</div>
 								</div>
 								<div className="flex items-center gap-3">
-									<Badge variant="outline" className="hidden sm:inline-flex text-muted-foreground">
+									<Badge className="hidden sm:inline-flex text-muted-foreground">
 										{t(coverageLabels[route.nativeStatus ?? "unsupported"])}
 									</Badge>
 									<Select
