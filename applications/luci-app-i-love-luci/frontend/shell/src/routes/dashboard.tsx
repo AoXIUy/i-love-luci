@@ -473,6 +473,17 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 				<div className="grid gap-5">
 					<Card>
 						<CardHeader>
+							<CardTitle>{t("CPU load")}</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<div className="h-48">
+								<Bar data={loadData} options={barOptions} />
+							</div>
+						</CardContent>
+					</Card>
+
+					<Card>
+						<CardHeader>
 							<CardTitle>{t("Memory")}</CardTitle>
 						</CardHeader>
 						<CardContent className="grid gap-4">
@@ -525,17 +536,6 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 								]}
 								summary={t("Disk details")}
 							/>
-						</CardContent>
-					</Card>
-
-					<Card>
-						<CardHeader>
-							<CardTitle>{t("CPU load")}</CardTitle>
-						</CardHeader>
-						<CardContent>
-							<div className="h-48">
-								<Bar data={loadData} options={barOptions} />
-							</div>
 						</CardContent>
 					</Card>
 				</div>
