@@ -6431,7 +6431,7 @@ function NetworkInterfaceEditor({
 				carrier: dev.carrier ?? false,
 				macaddr: dev.macaddr ?? "",
 				mtu: dev.mtu ?? 1500,
-				speed: dev.speed ?? 0,
+				speed: typeof dev.speed === "number" ? dev.speed : (parseInt(`${dev.speed ?? ""}`, 10) || 0),
 				duplex: dev.duplex ?? "unknown",
 				ports: [],
 				rx_bytes: dev.statistics?.rx_bytes ?? 0,
@@ -6449,7 +6449,7 @@ function NetworkInterfaceEditor({
 	const liveDevices = dashboard?.devices ?? {};
 
 	function getLiveStatus(row: NetworkInterfaceConfig): { label: "UP" | "DOWN" | "NO CARRIER"; variant: "emerald" | "amber" | "muted"; active: boolean } {
-		const live = liveInterfaces.find((item) => (item.interface || item.name) === row.section);
+		const live = liveInterfaces.find((item) => (item.interface || item.name || "") === row.section);
 		if (!live) {
 			return { label: "DOWN", variant: "muted", active: false };
 		}
@@ -6689,7 +6689,7 @@ function NetworkInterfaceEditor({
 					<tbody className="divide-y divide-border">
 						{visibleRows.map(({ row, index }) => {
 							const status = getLiveStatus(row);
-							const live = liveInterfaces.find((item) => (item.interface || item.name) === row.section);
+							const live = liveInterfaces.find((item) => (item.interface || item.name || "") === row.section);
 							const ips = (live ? getInterfaceAddresses(live) : (row.ipaddr ? row.ipaddr.split("\n").filter(Boolean) : []));
 							const isRestarting = restartingName === row.section;
 

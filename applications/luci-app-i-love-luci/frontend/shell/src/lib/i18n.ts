@@ -218,7 +218,6 @@ const dict: Record<string, string> = {
 	"Create Interface": "创建新接口",
 	"Delete Interface": "删除接口",
 	"Delete": "删除",
-	"Cancel": "取消",
 	"Save": "保存",
 	"Done": "完成",
 	"Confirm": "确认",

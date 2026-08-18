@@ -136,6 +136,9 @@ export type DeviceStatus = {
 	type?: string;
 	up?: boolean;
 	carrier?: boolean;
+	macaddr?: string;
+	mtu?: number;
+	duplex?: string;
 	speed?: string | number;
 	devtype?: string;
 	"bridge-members"?: string[];
@@ -169,6 +172,7 @@ export type NetworkInterfacePrefixAssignment = NetworkInterfaceAddress & {
 
 export type NetworkInterfaceStatus = {
 	interface?: string;
+	name?: string;
 	up?: boolean;
 	pending?: boolean;
 	available?: boolean;
