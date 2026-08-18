@@ -9,6 +9,7 @@ const dict: Record<string, string> = {
 	"Settings": "设置",
 	"Router console": "路由器控制台",
 	"Log out": "退出登录",
+	"Switch to LuCI": "切换到原始 LuCI",
 	"Signed in as": "当前登录用户为",
 	"Open console": "打开控制台",
 	"New session": "新建会话",

@@ -1,4 +1,4 @@
-import { LogOut, Menu, SquareTerminal } from "lucide-react";
+import { ExternalLink, LogOut, Menu, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import { HeaderSearch } from "@/components/shell/header-search";
 import { NotificationCenter } from "@/components/shell/notification-center";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { getShellConfig } from "@/lib/config";
 import {
 	getConsoleStatus,
 	getPendingChangeList,
@@ -25,6 +26,7 @@ type HeaderProps = {
 };
 
 export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
+	const { legacyBasePath } = getShellConfig();
 	const [pending, setPending] = useState(0);
 	const [session, setSession] = useState<SessionInfo | null>(null);
 	const [consoleStatus, setConsoleStatus] = useState<ConsoleStatus | null>(null);
@@ -144,6 +146,17 @@ export function Header({ navigationOpen, onMenuClick }: HeaderProps) {
 									{getLanguagePreference() === "zh" ? "English" : "简体中文"}
 								</button>
 							</div>
+
+							<a
+								className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-secondary"
+								href={legacyBasePath}
+								target="_blank"
+								rel="noopener noreferrer"
+								onClick={() => setProfileOpen(false)}
+							>
+								<ExternalLink className="size-4 text-muted-foreground" />
+								{t("Switch to LuCI")}
+							</a>
 
 							<a
 								className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-secondary text-destructive"
