@@ -1284,6 +1284,8 @@ export type NetworkInterfaceConfig = {
 	norelease: string;
 	username?: string;
 	password?: string;
+	service?: string;
+	ac?: string;
 	auth?: string;
 	server?: string;
 	apn?: string;
@@ -1297,6 +1299,53 @@ export type NetworkInterfaceConfig = {
 	ip6addr?: string;
 };
 
+export type NetworkProtocolInfo = {
+	id: string;
+	name: string;
+	category: string;
+	description: string;
+	virtual: boolean;
+	fields: string[];
+};
+
+export type NetworkDeviceStatusItem = {
+	name: string;
+	type: string;
+	devtype: string;
+	present: boolean;
+	up: boolean;
+	carrier: boolean;
+	macaddr: string;
+	mtu: number;
+	speed: number;
+	duplex: string;
+	ports: string[];
+	rx_bytes: number;
+	tx_bytes: number;
+	rx_packets: number;
+	tx_packets: number;
+	rx_errors: number;
+	tx_errors: number;
+	status_label: "UP" | "DOWN" | "NO CARRIER" | "UNAVAILABLE";
+};
+
+export type NetworkInterfaceDetailResult = {
+	name: string;
+	config: NetworkInterfaceConfig;
+	zone: string;
+	status: NetworkInterfaceStatus | null;
+	device_status: Record<string, unknown> | null;
+	error?: string;
+};
+
+export type InterfaceValidationResult = {
+	valid: boolean;
+	errors: Record<string, string>;
+	warnings?: Record<string, string>;
+	message?: string;
+	error?: string;
+};
+
 export type NetworkInterfacesResult = {
 	saved: boolean;
 	message: string;
@@ -1306,7 +1355,7 @@ export type NetworkInterfacesResult = {
 	firewallSections?: ConfigSection[];
 };
 
-export type NetworkInterfaceAction = "status";
+export type NetworkInterfaceAction = "status" | "up" | "down" | "restart" | "reload";
 
 export type NetworkInterfaceActionResult = {
 	ok: boolean;
@@ -2728,6 +2777,58 @@ export async function saveNetworkRules(rows: PolicyRule[], allowEmpty = false): 
 			changed: false,
 			rules: [],
 			sections: [],
+		};
+	}
+}
+
+export async function getNetworkProtocols(): Promise<NetworkProtocolInfo[]> {
+	try {
+		const res = await callBridge<NetworkProtocolInfo[] | { error: string }>("get_network_protocols");
+		if (Array.isArray(res)) {
+			return res;
+		}
+		return [];
+	}
+	catch {
+		return [];
+	}
+}
+
+export async function getDeviceList(): Promise<NetworkDeviceStatusItem[]> {
+	try {
+		const res = await callBridge<NetworkDeviceStatusItem[] | { error: string }>("get_device_list");
+		if (Array.isArray(res)) {
+			return res;
+		}
+		return [];
+	}
+	catch {
+		return [];
+	}
+}
+
+export async function getInterfaceDetail(name: string): Promise<NetworkInterfaceDetailResult | null> {
+	try {
+		const res = await callBridge<NetworkInterfaceDetailResult>("get_interface_detail", { name });
+		if (res && !res.error) {
+			return res;
+		}
+		return null;
+	}
+	catch {
+		return null;
+	}
+}
+
+export async function validateInterfaceConfig(config: Partial<NetworkInterfaceConfig>): Promise<InterfaceValidationResult> {
+	try {
+		return await callBridge<InterfaceValidationResult>("validate_interface_config", { config });
+	}
+	catch {
+		return {
+			valid: false,
+			errors: { general: "Interface configuration validation failed." },
+			message: "Interface configuration validation failed.",
 		};
 	}
 }

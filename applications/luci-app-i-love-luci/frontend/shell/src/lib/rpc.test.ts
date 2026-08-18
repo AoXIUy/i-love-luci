@@ -3,9 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	getConntrackSummary,
 	getDashboardStatus,
+	getDeviceList,
+	getInterfaceDetail,
+	getNetworkProtocols,
 	getProcessStats,
 	getThermalHistory,
 	probeAuthSession,
+	runNetworkInterfaceAction,
+	validateInterfaceConfig,
 } from "@/lib/rpc";
 
 function stubBrowser(sessionId: string | null) {
@@ -239,6 +244,155 @@ describe("extended dashboard RPCs", () => {
 		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fail")));
 		const fallback = await getThermalHistory();
 		expect(fallback.history).toHaveLength(0);
+	});
+
+	it("fetches network protocols and handles error", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: [
+								{ id: "dhcp", name: "DHCP client", category: "standard", description: "Dynamic IP", virtual: false, fields: ["hostname"] },
+								{ id: "static", name: "Static address", category: "standard", description: "Static IP", virtual: false, fields: ["ipaddr", "netmask"] },
+								{ id: "pppoe", name: "PPPoE", category: "ppp", description: "PPPoE broadband", virtual: false, fields: ["username", "password"] },
+							],
+						},
+					],
+				}),
+			),
+		);
+
+		const protos = await getNetworkProtocols();
+		expect(protos).toHaveLength(3);
+		expect(protos[0].id).toBe("dhcp");
+		expect(protos[2].id).toBe("pppoe");
+
+		// Fallback
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fail")));
+		const fallback = await getNetworkProtocols();
+		expect(fallback).toEqual([]);
+	});
+
+	it("fetches device list with carrier states", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: [
+								{ name: "eth0", type: "ethernet", devtype: "ethernet", present: true, up: true, carrier: true, macaddr: "00:11:22:33:44:55", mtu: 1500, speed: 1000, duplex: "full", ports: [], rx_bytes: 1024, tx_bytes: 2048, rx_packets: 10, tx_packets: 20, rx_errors: 0, tx_errors: 0, status_label: "UP" },
+								{ name: "br-lan", type: "bridge", devtype: "bridge", present: true, up: true, carrier: true, macaddr: "00:11:22:33:44:56", mtu: 1500, speed: 0, duplex: "unknown", ports: ["lan1", "lan2"], rx_bytes: 0, tx_bytes: 0, rx_packets: 0, tx_packets: 0, rx_errors: 0, tx_errors: 0, status_label: "UP" },
+							],
+						},
+					],
+				}),
+			),
+		);
+
+		const devs = await getDeviceList();
+		expect(devs).toHaveLength(2);
+		expect(devs[0].name).toBe("eth0");
+		expect(devs[0].status_label).toBe("UP");
+		expect(devs[1].ports).toContain("lan1");
+
+		// Fallback
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fail")));
+		const fallback = await getDeviceList();
+		expect(fallback).toEqual([]);
+	});
+
+	it("fetches interface detail and validates config", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: {
+								name: "wan",
+								config: { section: "wan", proto: "dhcp", device: "eth1", disabled: "0", auto: "1", ipaddr: "", netmask: "", gateway: "", broadcast: "", ip6assign: "", ip6hint: "", ip6ifaceid: "", ip6class: "", ip6prefix: "", dns: "", dns_metric: "", metric: "", peerdns: "1", delegate: "1", hostname: "", clientid: "", vendorid: "", norelease: "" },
+								zone: "wan",
+								status: { up: true, uptime: 120 },
+								device_status: null,
+							},
+						},
+					],
+				}),
+			),
+		);
+
+		const detail = await getInterfaceDetail("wan");
+		expect(detail).not.toBeNull();
+		expect(detail?.name).toBe("wan");
+		expect(detail?.config.proto).toBe("dhcp");
+
+		// Validation test
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: {
+								valid: true,
+								errors: {},
+								message: "Configuration is valid.",
+							},
+						},
+					],
+				}),
+			),
+		);
+
+		const valResult = await validateInterfaceConfig({ section: "wan", proto: "static", ipaddr: "192.168.1.2/24" });
+		expect(valResult.valid).toBe(true);
+	});
+
+	it("runs network interface action (up/down/restart)", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: {
+								ok: true,
+								name: "lan",
+								action: "restart",
+								message: "Interface restart completed successfully.",
+								state: null,
+							},
+						},
+					],
+				}),
+			),
+		);
+
+		const res = await runNetworkInterfaceAction("lan", "restart");
+		expect(res.ok).toBe(true);
+		expect(res.action).toBe("restart");
+
+		// Fallback
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fail")));
+		const fallback = await runNetworkInterfaceAction("lan", "restart");
+		expect(fallback.ok).toBe(false);
 	});
 });
 

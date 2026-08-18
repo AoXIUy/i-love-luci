@@ -1,16 +1,20 @@
-import { ArrowDown, ArrowUp, Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, Copy, Eye, EyeOff, Layers, Loader2, Network, Pencil, Plus, RotateCw, Trash2, Wifi } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { Drawer } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { t } from "@/lib/i18n";
 import {
 	getCoreSettings,
 	getDashboardStatus,
+	getDeviceList,
+	getNetworkProtocols,
+	runNetworkInterfaceAction,
 	saveFirewallDefaults,
 	saveFirewallFile,
 	saveFirewallForwardings,
@@ -40,6 +44,7 @@ import {
 	saveSystemSettings,
 	saveUhttpdCertDefaults,
 	syncSystemTime,
+	validateInterfaceConfig,
 	type ConfigSection,
 	type CoreSettings,
 	type DashboardStatus,
@@ -63,10 +68,13 @@ import {
 	type FirewallRedirect,
 	type FirewallRuleRow,
 	type FirewallZone,
+	type InterfaceValidationResult,
 	type LuciUiSettingsInput,
 	type NetworkDeviceConfig,
+	type NetworkDeviceStatusItem,
 	type NetworkInterfaceConfig,
 	type NetworkInterfaceStatus,
+	type NetworkProtocolInfo,
 	type OdhcpdConfigInput,
 	type PolicyRule,
 	type ServiceFile,
@@ -6152,6 +6160,7 @@ function NetworkSummary({
 		<div className="grid gap-8">
 			{configInterfaces.length ? (
 				<NetworkInterfaceEditor
+					dashboard={dashboard}
 					firewallZones={firewallZones}
 					interfaces={configInterfaces}
 					onSaved={(sections, nextFirewallZones) =>
@@ -6347,10 +6356,12 @@ function NetworkRoutesSummary({
 }
 
 function NetworkInterfaceEditor({
+	dashboard,
 	firewallZones,
 	interfaces,
 	onSaved,
 }: {
+	dashboard: DashboardStatus | null;
 	firewallZones: ConfigSection[];
 	interfaces: ConfigSection[];
 	onSaved: (sections: ConfigSection[], firewallSections?: ConfigSection[]) => void;
@@ -6359,43 +6370,237 @@ function NetworkInterfaceEditor({
 	const [savedRows, setSavedRows] = useState(rows);
 	const [saving, setSaving] = useState(false);
 	const [editingIndex, setEditingIndex] = useState<number | null>(null);
+	const [deletingIndex, setDeletingIndex] = useState<number | null>(null);
+	const [restartingName, setRestartingName] = useState<string | null>(null);
+	const [protocols, setProtocols] = useState<NetworkProtocolInfo[]>([]);
+	const [devicesList, setDevicesList] = useState<NetworkDeviceStatusItem[]>([]);
+	const [showPassword, setShowPassword] = useState(false);
+	const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+	const [deviceMode, setDeviceMode] = useState<"single" | "bridge">("single");
+	const [bridgePorts, setBridgePorts] = useState<string[]>([]);
+
+	useEffect(() => {
+		let isMounted = true;
+		getNetworkProtocols().then((list) => {
+			if (isMounted && list.length) setProtocols(list);
+		});
+		getDeviceList().then((devs) => {
+			if (isMounted && devs.length) setDevicesList(devs);
+		});
+		return () => {
+			isMounted = false;
+		};
+	}, []);
 
 	const dirty = JSON.stringify(rows) !== JSON.stringify(savedRows);
 	const visibleRows = rows
 		.map((row, index) => ({ row, index }))
 		.filter(({ row }) => row.remove !== "1");
+
 	const firewallZoneOptions = useMemo<[string, string][]>(
 		() => [
-			["", "Unspecified"],
+			["", t("Unspecified")],
 			...firewallZones.map((zone) => {
 				const name = rawValue(zone.values.name || zone.name);
 				return [name, name] as [string, string];
 			}),
-			["__custom", "Create new..."],
+			["__custom", t("Create new...")],
 		],
 		[firewallZones],
 	);
 
+	const protocolOptions = useMemo<[string, string][]>(() => {
+		if (protocols.length) {
+			return protocols.map((p) => [p.id, `${p.name} (${p.id})`]);
+		}
+		return NETWORK_PROTOCOL_OPTIONS;
+	}, [protocols]);
+
+	const availablePhysicalDevices = useMemo(() => {
+		if (devicesList.length) {
+			return devicesList.filter((d) => d.devtype !== "bridge");
+		}
+		const devs = Object.entries(dashboard?.devices ?? {})
+			.filter(([, dev]) => dev.present && dev.devtype !== "bridge")
+			.map(([name, dev]) => ({
+				name,
+				type: "ethernet",
+				devtype: "ethernet",
+				present: dev.present,
+				up: dev.up ?? false,
+				carrier: dev.carrier ?? false,
+				macaddr: dev.macaddr ?? "",
+				mtu: dev.mtu ?? 1500,
+				speed: dev.speed ?? 0,
+				duplex: dev.duplex ?? "unknown",
+				ports: [],
+				rx_bytes: dev.statistics?.rx_bytes ?? 0,
+				tx_bytes: dev.statistics?.tx_bytes ?? 0,
+				rx_packets: dev.statistics?.rx_packets ?? 0,
+				tx_packets: dev.statistics?.tx_packets ?? 0,
+				rx_errors: 0,
+				tx_errors: 0,
+				status_label: ((dev.up && dev.carrier) ? "UP" : (dev.up ? "NO CARRIER" : "DOWN")) as "UP" | "DOWN" | "NO CARRIER",
+			}));
+		return devs;
+	}, [devicesList, dashboard?.devices]);
+
+	const liveInterfaces = dashboard?.interfaces ?? [];
+	const liveDevices = dashboard?.devices ?? {};
+
+	function getLiveStatus(row: NetworkInterfaceConfig): { label: "UP" | "DOWN" | "NO CARRIER"; variant: "emerald" | "amber" | "muted"; active: boolean } {
+		const live = liveInterfaces.find((item) => (item.interface || item.name) === row.section);
+		if (!live) {
+			return { label: "DOWN", variant: "muted", active: false };
+		}
+		if (row.disabled === "1" || !live.up) {
+			return { label: "DOWN", variant: "muted", active: false };
+		}
+		const devName = live.l3_device || live.device || row.device;
+		const devInfo = liveDevices[devName];
+		if (devInfo && devInfo.carrier === false) {
+			return { label: "NO CARRIER", variant: "amber", active: true };
+		}
+		return { label: "UP", variant: "emerald", active: true };
+	}
+
+	function runInlineValidation(row: NetworkInterfaceConfig, allRows: NetworkInterfaceConfig[]) {
+		const errs: Record<string, string> = {};
+		if (!row.section.trim()) {
+			errs.section = t("Interface Name is required.");
+		} else if (!/^[A-Za-z0-9_.:-]+$/.test(row.section)) {
+			errs.section = t("Interface name contains invalid characters. Only alphanumeric, _, ., :, - allowed.");
+		}
+
+		if (row.proto === "static") {
+			const ips = row.ipaddr.split("\n").map((s) => s.trim()).filter(Boolean);
+			if (!ips.length) {
+				errs.ipaddr = t("IPv4 address is required for static protocol.");
+			} else {
+				for (const ip of ips) {
+					const [addr, cidr] = ip.split("/");
+					if (!/^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/.test(addr)) {
+						errs.ipaddr = `${t("Invalid IPv4 address or CIDR")}: ${addr}`;
+						break;
+					}
+					if (cidr !== undefined) {
+						const num = parseInt(cidr, 10);
+						if (isNaN(num) || num < 1 || num > 32) {
+							errs.ipaddr = `${t("Invalid CIDR prefix length")}: /${cidr}`;
+							break;
+						}
+					}
+				}
+			}
+
+			if (row.netmask) {
+				if (!/^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/.test(row.netmask)) {
+					errs.netmask = t("Invalid subnet mask format");
+				}
+			}
+
+			if (row.gateway) {
+				if (!/^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/.test(row.gateway) || row.gateway === "0.0.0.0") {
+					errs.gateway = t("Invalid gateway IPv4 address");
+				}
+			}
+
+			if (!errs.ipaddr) {
+				for (const other of allRows) {
+					if (other.section === row.section || other.remove === "1" || other.proto !== "static") continue;
+					const otherIps = other.ipaddr.split("\n").map((s) => s.trim().split("/")[0]).filter(Boolean);
+					for (const myIp of ips) {
+						const cleanMy = myIp.split("/")[0];
+						if (otherIps.includes(cleanMy)) {
+							errs.ipaddr = `${t("IP address conflict detected")}: ${cleanMy} (${other.section})`;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		if (row.proto === "pppoe") {
+			if (!row.username?.trim()) {
+				errs.username = t("PAP/CHAP username is required");
+			}
+			if (row.mtu) {
+				const num = parseInt(row.mtu, 10);
+				if (isNaN(num) || num < 576 || num > 1500) {
+					errs.mtu = t("MTU must be between 576 and 1500");
+				}
+			}
+		}
+
+		setValidationErrors(errs);
+		return Object.keys(errs).length === 0;
+	}
+
 	function updateRow(index: number, field: keyof NetworkInterfaceConfig, value: string) {
-		setRows((current) =>
-			current.map((row, rowIndex) =>
+		setRows((current) => {
+			const next = current.map((row, rowIndex) =>
 				rowIndex === index
 					? {
 							...row,
 							[field]: value,
 						}
 					: row,
-			),
-		);
+			);
+			if (editingIndex === index) {
+				runInlineValidation(next[index], next);
+			}
+			return next;
+		});
 	}
 
 	function addRow() {
 		const newName = uniqueNetworkInterfaceName(rows);
-		setRows((current) => [...current, newNetworkInterfaceRow(newName)]);
+		const newRow = newNetworkInterfaceRow(newName);
+		setRows((current) => [...current, newRow]);
 		setEditingIndex(rows.length);
+		setShowPassword(false);
+		setDeviceMode("single");
+		setBridgePorts([]);
+		setValidationErrors({});
 	}
 
-	function removeRow(index: number) {
+	function openEdit(index: number) {
+		const row = rows[index];
+		if (!row) return;
+		setEditingIndex(index);
+		setShowPassword(false);
+		const isBridge = row.device.startsWith("br-") || row.device.startsWith("br_");
+		setDeviceMode(isBridge ? "bridge" : "single");
+		const devItem = devicesList.find((d) => d.name === row.device);
+		setBridgePorts(devItem?.ports ?? []);
+		runInlineValidation(row, rows);
+	}
+
+	async function handleRestart(name: string) {
+		setRestartingName(name);
+		toast.loading(`${t("Restarting interface...")} (${name})`, { id: `restart-${name}` });
+		const result = await runNetworkInterfaceAction(name, "restart");
+		setRestartingName(null);
+		if (result.ok) {
+			toast.success(`${t("Interface restarted successfully")}: ${name}`, { id: `restart-${name}` });
+		} else {
+			toast.error(`${t("Failed to restart interface")}: ${name}`, { id: `restart-${name}` });
+		}
+	}
+
+	function confirmDelete(index: number) {
+		const row = rows[index];
+		if (!row) return;
+		if (row.section === "loopback") {
+			toast.error(t("Loopback interface cannot be removed."));
+			return;
+		}
+		setDeletingIndex(index);
+	}
+
+	function executeDelete() {
+		if (deletingIndex === null) return;
+		const index = deletingIndex;
 		setRows((current) => {
 			const row = current[index];
 			if (!row || row.isNew === "1") {
@@ -6406,12 +6611,32 @@ function NetworkInterfaceEditor({
 		if (editingIndex === index) {
 			setEditingIndex(null);
 		}
+		setDeletingIndex(null);
+		toast.success(t("Interface marked for removal. Click Save & Apply to commit."));
 	}
 
-	async function submit(event: FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) {
+	async function submit(event?: FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>) {
 		if (event && "preventDefault" in event) {
 			event.preventDefault();
 		}
+
+		if (editingIndex !== null) {
+			const currentRow = rows[editingIndex];
+			if (currentRow) {
+				const isValid = runInlineValidation(currentRow, rows);
+				if (!isValid) {
+					toast.error(t("Please correct validation errors before saving."));
+					return;
+				}
+				const backendVal = await validateInterfaceConfig(currentRow);
+				if (!backendVal.valid) {
+					setValidationErrors((prev) => ({ ...prev, ...backendVal.errors }));
+					toast.error(backendVal.message || t("Validation failed with errors."));
+					return;
+				}
+			}
+		}
+
 		setSaving(true);
 		const result = await saveNetworkInterfaces(rows);
 		setSaving(false);
@@ -6425,13 +6650,15 @@ function NetworkInterfaceEditor({
 		toast.success(result.message);
 		setRows(nextRows);
 		setSavedRows(nextRows);
+		setEditingIndex(null);
 		onSaved(result.sections, result.firewallSections);
 	}
 
 	const editingRow = editingIndex !== null ? rows[editingIndex] : null;
+	const deletingRow = deletingIndex !== null ? rows[deletingIndex] : null;
 
 	return (
-		<section className="grid gap-3">
+		<section className="grid gap-4">
 			<div className="flex items-center justify-between gap-3">
 				<div>
 					<h2 className="text-base font-semibold">{t("Interface configuration")}</h2>
@@ -6439,637 +6666,705 @@ function NetworkInterfaceEditor({
 				</div>
 				<div className="flex items-center gap-2">
 					<span className="text-xs text-muted-foreground">{visibleRows.length} {t("interfaces")}</span>
-					<Button onClick={addRow} size="sm" type="button" variant="outline">
+					<Button onClick={addRow} size="sm" type="button">
 						<Plus className="size-4" />
 						{t("Add interface")}
 					</Button>
 				</div>
 			</div>
-			<div className="overflow-x-auto rounded-md border bg-card shadow-sm">
+
+			<div className="overflow-x-auto rounded-lg border bg-card shadow-sm">
 				<table className="w-full text-left text-sm">
-					<thead className="border-b text-xs uppercase text-muted-foreground">
+					<thead className="border-b bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
 						<tr>
-							<th className="px-3 py-2 font-medium">{t("Interface")}</th>
-							<th className="px-3 py-2 font-medium">{t("Protocol")}</th>
-							<th className="px-3 py-2 font-medium">{t("Device")}</th>
-							<th className="px-3 py-2 font-medium">{t("Firewall zone")}</th>
-							<th className="px-3 py-2 font-medium text-right">{t("Actions")}</th>
+							<th className="px-4 py-3 font-medium">{t("Status")}</th>
+							<th className="px-4 py-3 font-medium">{t("Interface")}</th>
+							<th className="px-4 py-3 font-medium">{t("Protocol")}</th>
+							<th className="px-4 py-3 font-medium">{t("Device")}</th>
+							<th className="px-4 py-3 font-medium">{t("Addresses")}</th>
+							<th className="px-4 py-3 font-medium">{t("Firewall Zone")}</th>
+							<th className="px-4 py-3 font-medium text-right">{t("Actions")}</th>
 						</tr>
 					</thead>
-					<tbody>
-						{visibleRows.map(({ row, index }) => (
-							<tr className="border-b align-top last:border-0 hover:bg-muted/30" key={`network-interface-${index}`}>
-								<td className="px-3 py-3 font-medium">{row.isNew === "1" ? row.section + " (New)" : row.section}</td>
-								<td className="px-3 py-3 text-muted-foreground">{row.proto || t("none")}</td>
-								<td className="px-3 py-3 text-muted-foreground">{row.device || t("none")}</td>
-								<td className="px-3 py-3 text-muted-foreground">{row.zone === "__custom" ? row.zoneName : (row.zone || t("unspecified"))}</td>
-								<td className="px-3 py-3 text-right">
-									<div className="flex justify-end gap-1">
-										<Button aria-label={`Edit ${row.section}`} onClick={() => setEditingIndex(index)} size="icon" type="button" variant="ghost">
-											<Pencil className="size-4" />
-										</Button>
-										<Button aria-label={`Remove ${row.section}`} disabled={row.section === "loopback"} onClick={() => removeRow(index)} size="icon" type="button" variant="ghost" className="text-destructive">
-											<Trash2 className="size-4" />
-										</Button>
-									</div>
-								</td>
-							</tr>
-						))}
+					<tbody className="divide-y divide-border">
+						{visibleRows.map(({ row, index }) => {
+							const status = getLiveStatus(row);
+							const live = liveInterfaces.find((item) => (item.interface || item.name) === row.section);
+							const ips = (live ? getInterfaceAddresses(live) : (row.ipaddr ? row.ipaddr.split("\n").filter(Boolean) : []));
+							const isRestarting = restartingName === row.section;
+
+							return (
+								<tr className="transition-colors hover:bg-muted/30" key={`network-iface-${index}`}>
+									<td className="px-4 py-3.5">
+										{status.label === "UP" ? (
+											<Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 gap-1.5 font-medium">
+												<span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+												{t("UP")}
+											</Badge>
+										) : status.label === "NO CARRIER" ? (
+											<Badge className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 gap-1.5 font-medium">
+												<span className="size-1.5 rounded-full bg-amber-500" />
+												{t("NO CARRIER")}
+											</Badge>
+										) : (
+											<Badge className="border-border bg-muted/50 text-muted-foreground gap-1.5 font-medium">
+												<span className="size-1.5 rounded-full bg-muted-foreground/40" />
+												{t("DOWN")}
+											</Badge>
+										)}
+									</td>
+									<td className="px-4 py-3.5">
+										<div className="flex items-center gap-2">
+											<span className="font-semibold text-foreground">{row.section}</span>
+											{row.isNew === "1" ? (
+												<Badge className="border-primary/30 bg-primary/10 text-primary text-[10px] uppercase">{t("new")}</Badge>
+											) : null}
+											{row.defaultroute === "1" ? (
+												<Badge className="border-border bg-muted/30 text-[10px] text-muted-foreground">{t("default route")}</Badge>
+											) : null}
+										</div>
+									</td>
+									<td className="px-4 py-3.5">
+										<Badge className="bg-secondary text-secondary-foreground font-mono text-xs uppercase">
+											{row.proto || t("none")}
+										</Badge>
+									</td>
+									<td className="px-4 py-3.5 text-muted-foreground">
+										<span className="font-mono text-xs">{row.device || t("none")}</span>
+									</td>
+									<td className="px-4 py-3.5">
+										{ips.length ? (
+											<div className="flex flex-col gap-0.5">
+												{ips.slice(0, 2).map((ip, i) => (
+													<span className="font-mono text-xs font-medium text-foreground" key={i}>{ip}</span>
+												))}
+												{ips.length > 2 ? (
+													<span className="text-[11px] text-muted-foreground">+{ips.length - 2} more</span>
+												) : null}
+											</div>
+										) : (
+											<span className="text-xs text-muted-foreground font-mono">-</span>
+										)}
+									</td>
+									<td className="px-4 py-3.5">
+										{row.zone ? (
+											<Badge className="border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-medium">
+												{row.zone === "__custom" ? row.zoneName : row.zone}
+											</Badge>
+										) : (
+											<span className="text-xs text-muted-foreground">{t("unspecified")}</span>
+										)}
+									</td>
+									<td className="px-4 py-3.5 text-right">
+										<div className="flex justify-end items-center gap-1">
+											<Button
+												aria-label={`Restart ${row.section}`}
+												className="text-muted-foreground hover:text-foreground"
+												disabled={isRestarting || row.isNew === "1"}
+												onClick={() => handleRestart(row.section)}
+												size="icon"
+												title={t("Restart Interface")}
+												type="button"
+												variant="ghost"
+											>
+												<RotateCw className={isRestarting ? "size-4 animate-spin text-primary" : "size-4"} />
+											</Button>
+											<Button
+												aria-label={`Edit ${row.section}`}
+												className="text-muted-foreground hover:text-foreground"
+												onClick={() => openEdit(index)}
+												size="icon"
+												title={t("Edit Interface")}
+												type="button"
+												variant="ghost"
+											>
+												<Pencil className="size-4" />
+											</Button>
+											<Button
+												aria-label={`Remove ${row.section}`}
+												className="text-destructive/80 hover:text-destructive hover:bg-destructive/10"
+												disabled={row.section === "loopback"}
+												onClick={() => confirmDelete(index)}
+												size="icon"
+												title={t("Delete Interface")}
+												type="button"
+												variant="ghost"
+											>
+												<Trash2 className="size-4" />
+											</Button>
+										</div>
+									</td>
+								</tr>
+							);
+						})}
 						{visibleRows.length === 0 && (
 							<tr>
-								<td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">{t("No interfaces configured.")}</td>
+								<td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">
+									{t("No interfaces configured.")}
+								</td>
 							</tr>
 						)}
 					</tbody>
 				</table>
 			</div>
-			<div className="flex justify-end gap-2">
-				<Button disabled={!dirty || saving} onClick={() => setRows(savedRows)} type="button" variant="outline">{t("Cancel")}</Button>
-				<Button disabled={!dirty || saving} onClick={submit} type="button">{t("Save")}</Button>
+
+			<div className="flex items-center justify-between pt-1">
+				<div className="text-xs text-muted-foreground">
+					{dirty ? t("You have unsaved changes.") : t("All settings up to date.")}
+				</div>
+				<div className="flex gap-2">
+					<Button disabled={!dirty || saving} onClick={() => setRows(savedRows)} type="button" variant="outline">
+						{t("Cancel")}
+					</Button>
+					<Button disabled={!dirty || saving} onClick={submit} type="button">
+						{saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+						{t("Save & Apply")}
+					</Button>
+				</div>
 			</div>
-			<Drawer open={editingIndex !== null} onOpenChange={(open) => !open && setEditingIndex(null)} title={editingRow ? `${t("Edit")} ${editingRow.section}` : t("Edit Interface")}>
+
+			{/* Delete Confirmation Modal Dialog */}
+			<Dialog
+				open={deletingIndex !== null}
+				onOpenChange={(open) => !open && setDeletingIndex(null)}
+				title={t("Delete Interface")}
+			>
+				{deletingRow && (
+					<div className="space-y-4">
+						<div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+							<AlertTriangle className="mt-0.5 size-5 shrink-0" />
+							<div className="text-sm">
+								<p className="font-medium">
+									{t("Are you sure you want to delete this interface?")} (<span className="font-mono font-bold">{deletingRow.section}</span>)
+								</p>
+								<p className="mt-1 text-xs text-muted-foreground">
+									{t("This action cannot be undone and may disrupt network connectivity.")}
+								</p>
+							</div>
+						</div>
+						<div className="flex justify-end gap-2 pt-2">
+							<Button onClick={() => setDeletingIndex(null)} type="button" variant="outline">
+								{t("Cancel")}
+							</Button>
+							<Button onClick={executeDelete} type="button" variant="destructive">
+								<Trash2 className="mr-2 size-4" />
+								{t("Delete")}
+							</Button>
+						</div>
+					</div>
+				)}
+			</Dialog>
+
+			{/* Interface Edit / Create Drawer */}
+			<Drawer
+				open={editingIndex !== null}
+				onOpenChange={(open) => !open && setEditingIndex(null)}
+				title={editingRow ? (editingRow.isNew === "1" ? t("Create Interface") : `${t("Edit Interface")}: ${editingRow.section}`) : t("Edit Interface")}
+			>
 				{editingIndex !== null && editingRow && (
 					<form className="flex h-full flex-col" onSubmit={submit}>
-						<div className="flex-1 space-y-8 pb-8">
+						<div className="flex-1 space-y-6 pb-6">
+							{/* General Settings */}
 							<div className="space-y-4">
-								<h3 className="font-semibold">{t("General Settings")}</h3>
+								<h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+									{t("General Settings")}
+								</h3>
 								<div className="grid gap-4 sm:grid-cols-2">
 									<div className="grid gap-2">
 										<label className="text-sm font-medium">{t("Interface Name")}</label>
 										{editingRow.isNew === "1" ? (
-											<Input onChange={(event) => updateRow(editingIndex, "section", event.target.value)} value={editingRow.section} />
+											<Input
+												className={validationErrors.section ? "border-destructive focus-visible:border-destructive" : ""}
+												onChange={(e) => updateRow(editingIndex, "section", e.target.value)}
+												placeholder={t("e.g. wan2, vlan10")}
+												value={editingRow.section}
+											/>
 										) : (
-											<Input value={editingRow.section} disabled />
+											<Input disabled value={editingRow.section} />
+										)}
+										{validationErrors.section && (
+											<span className="text-xs text-destructive flex items-center gap-1">
+												<AlertCircle className="size-3" />
+												{validationErrors.section}
+											</span>
 										)}
 									</div>
+
 									<div className="grid gap-2">
 										<label className="text-sm font-medium">{t("Protocol")}</label>
-										<NetworkProtocolField id={`network-interface-proto-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "proto", value)} value={editingRow.proto} />
+										<select
+											className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none focus-visible:border-ring font-medium"
+											onChange={(e) => updateRow(editingIndex, "proto", e.target.value)}
+											value={editingRow.proto}
+										>
+											{protocolOptions.map(([id, label]) => (
+												<option key={id} value={id}>{label}</option>
+											))}
+										</select>
 									</div>
-									<div className="grid gap-2">
-										<label className="text-sm font-medium">{t("Device")}</label>
-										<Input onChange={(event) => updateRow(editingIndex, "device", event.target.value)} value={editingRow.device} />
-									</div>
+
 									<div className="grid gap-2">
 										<label className="text-sm font-medium">{t("Firewall Zone")}</label>
 										<div className="grid gap-2">
-											<SelectField id={`network-interface-zone-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "zone", value)} options={firewallZoneOptions} value={editingRow.zone ?? ""} />
-											{editingRow.zone === "__custom" ? <Input onChange={(event) => updateRow(editingIndex, "zoneName", event.target.value)} placeholder={t("zone name")} value={editingRow.zoneName ?? ""} /> : null}
+											<SelectField
+												id={`drawer-zone-${editingIndex}`}
+												onChange={(val) => updateRow(editingIndex, "zone", val)}
+												options={firewallZoneOptions}
+												value={editingRow.zone ?? ""}
+											/>
+											{editingRow.zone === "__custom" ? (
+												<Input
+													onChange={(e) => updateRow(editingIndex, "zoneName", e.target.value)}
+													placeholder={t("New firewall zone name")}
+													value={editingRow.zoneName ?? ""}
+												/>
+											) : null}
 										</div>
 									</div>
+
 									<div className="grid gap-2">
 										<label className="text-sm font-medium">{t("Bring up on boot")}</label>
-										<SelectField id={`network-interface-auto-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auto", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.auto} />
+										<SelectField
+											id={`drawer-auto-${editingIndex}`}
+											onChange={(val) => updateRow(editingIndex, "auto", val)}
+											options={DEFAULT_FLAG_OPTIONS}
+											value={editingRow.auto}
+										/>
 									</div>
-									{editingRow.proto !== "none" && (
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Default route")}</label>
-											<SelectField id={`network-interface-defaultroute-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "defaultroute", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.defaultroute} />
-										</div>
-									)}
+
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Default route")}</label>
+										<SelectField
+											id={`drawer-defaultroute-${editingIndex}`}
+											onChange={(val) => updateRow(editingIndex, "defaultroute", val)}
+											options={DEFAULT_FLAG_OPTIONS}
+											value={editingRow.defaultroute}
+										/>
+									</div>
+
 									<div className="grid gap-2">
 										<label className="text-sm font-medium">{t("Disabled")}</label>
-										<SelectField id={`network-interface-disabled-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "disabled", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.disabled} />
+										<SelectField
+											id={`drawer-disabled-${editingIndex}`}
+											onChange={(val) => updateRow(editingIndex, "disabled", val)}
+											options={DEFAULT_FLAG_OPTIONS}
+											value={editingRow.disabled}
+										/>
 									</div>
 								</div>
 							</div>
-							{editingRow.proto === "static" && (
-								<div className="space-y-4">
-									<h3 className="font-semibold">{t("IPv4 Settings")}</h3>
+
+							{/* Physical Device & Bridge Binding */}
+							<div className="space-y-4 pt-4 border-t">
+								<div className="flex items-center justify-between">
+									<h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+										{t("Device Binding")}
+									</h3>
+									<div className="flex rounded-md border p-0.5 bg-muted/30">
+										<button
+											type="button"
+											className={`px-2.5 py-1 text-xs rounded font-medium transition-colors ${deviceMode === "single" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+											onClick={() => setDeviceMode("single")}
+										>
+											{t("Single device")}
+										</button>
+										<button
+											type="button"
+											className={`px-2.5 py-1 text-xs rounded font-medium transition-colors ${deviceMode === "bridge" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+											onClick={() => {
+												setDeviceMode("bridge");
+												if (!editingRow.device.startsWith("br-")) {
+													updateRow(editingIndex, "device", `br-${editingRow.section}`);
+												}
+											}}
+										>
+											{t("Bridge multiple devices")}
+										</button>
+									</div>
+								</div>
+
+								{deviceMode === "single" ? (
+									<div className="grid gap-2">
+										<label className="text-sm font-medium">{t("Select physical device")}</label>
+										<div className="grid gap-2">
+											<select
+												className="h-10 w-full rounded-md border bg-card px-3 text-sm outline-none focus-visible:border-ring font-mono"
+												onChange={(e) => updateRow(editingIndex, "device", e.target.value)}
+												value={editingRow.device}
+											>
+												<option value="">{t("None / Unspecified")}</option>
+												{availablePhysicalDevices.map((dev) => (
+													<option key={dev.name} value={dev.name}>
+														{dev.name} {dev.macaddr ? `(${dev.macaddr})` : ""} [{dev.status_label}]
+													</option>
+												))}
+											</select>
+											<Input
+												className="font-mono text-xs"
+												onChange={(e) => updateRow(editingIndex, "device", e.target.value)}
+												placeholder={t("Or type custom device name (e.g. eth0, wlan0)")}
+												value={editingRow.device}
+											/>
+										</div>
+									</div>
+								) : (
+									<div className="space-y-3">
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Bridge Device Name")}</label>
+											<Input
+												className="font-mono"
+												onChange={(e) => updateRow(editingIndex, "device", e.target.value)}
+												value={editingRow.device || `br-${editingRow.section}`}
+											/>
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Bridge port members")}</label>
+											<div className="grid grid-cols-2 gap-2 rounded-md border p-3 bg-muted/10">
+												{availablePhysicalDevices.map((dev) => {
+													const checked = bridgePorts.includes(dev.name);
+													return (
+														<label
+															className="flex items-center gap-2 p-2 rounded hover:bg-card border border-transparent hover:border-border cursor-pointer text-xs"
+															key={dev.name}
+														>
+															<input
+																type="checkbox"
+																className="rounded border-border"
+																checked={checked}
+																onChange={(e) => {
+																	const next = e.target.checked
+																		? [...bridgePorts, dev.name]
+																		: bridgePorts.filter((p) => p !== dev.name);
+																	setBridgePorts(next);
+																}}
+															/>
+															<div className="min-w-0">
+																<span className="font-mono font-medium">{dev.name}</span>
+																<span className="ml-1.5 text-[10px] text-muted-foreground">[{dev.status_label}]</span>
+															</div>
+														</label>
+													);
+												})}
+											</div>
+										</div>
+									</div>
+								)}
+							</div>
+
+							{/* Protocol Specific: DHCP */}
+							{editingRow.proto === "dhcp" && (
+								<div className="space-y-4 pt-4 border-t">
+									<h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+										{t("DHCP client")} {t("Settings")}
+									</h3>
 									<div className="grid gap-4 sm:grid-cols-2">
 										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("IPv4 address")}</label>
-											<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ipaddr", event.target.value)} spellCheck={false} value={editingRow.ipaddr} />
+											<label className="text-sm font-medium">{t("DHCP hostname")}</label>
+											<Input
+												onChange={(e) => updateRow(editingIndex, "hostname", e.target.value)}
+												placeholder={t("e.g. openwrt-router")}
+												value={editingRow.hostname}
+											/>
 										</div>
 										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Gateway")}</label>
-											<Input onChange={(event) => updateRow(editingIndex, "gateway", event.target.value)} value={editingRow.gateway} />
+											<label className="text-sm font-medium">{t("DHCP client ID")}</label>
+											<Input
+												onChange={(e) => updateRow(editingIndex, "clientid", e.target.value)}
+												value={editingRow.clientid}
+											/>
 										</div>
 										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Netmask")}</label>
-											<Input onChange={(event) => updateRow(editingIndex, "netmask", event.target.value)} value={editingRow.netmask} />
+											<label className="text-sm font-medium">{t("DHCP vendor class")}</label>
+											<Input
+												onChange={(e) => updateRow(editingIndex, "vendorid", e.target.value)}
+												value={editingRow.vendorid}
+											/>
 										</div>
 										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Broadcast")}</label>
-											<Input onChange={(event) => updateRow(editingIndex, "broadcast", event.target.value)} value={editingRow.broadcast} />
-										</div>
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Metric")}</label>
-											<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "metric", event.target.value)} value={editingRow.metric} />
-										</div>
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Force link")}</label>
-											<SelectField id={`network-interface-force-link-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "force_link", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.force_link} />
+											<label className="text-sm font-medium">{t("No release")}</label>
+											<SelectField
+												id={`drawer-norelease-${editingIndex}`}
+												onChange={(val) => updateRow(editingIndex, "norelease", val)}
+												options={DEFAULT_FLAG_OPTIONS}
+												value={editingRow.norelease}
+											/>
 										</div>
 									</div>
 								</div>
 							)}
-							{["pppoe", "ppp", "pptp", "l2tp", "6in4", "6to4", "6rd", "dslite", "map", "464xlat"].includes(editingRow.proto) && (
-								<div className="space-y-4">
-									<h3 className="font-semibold">{t("PPP / Tunnel Settings")}</h3>
+
+							{/* Protocol Specific: Static */}
+							{editingRow.proto === "static" && (
+								<div className="space-y-4 pt-4 border-t">
+									<h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+										{t("IPv4 Settings")} ({t("Static address")})
+									</h3>
 									<div className="grid gap-4 sm:grid-cols-2">
-										{["pppoe", "ppp", "pptp", "l2tp"].includes(editingRow.proto) && (
+										<div className="grid gap-2 sm:col-span-2">
+											<label className="text-sm font-medium">
+												{t("IPv4 address")} <span className="text-destructive">*</span>
+											</label>
+											<textarea
+												className={`min-h-[72px] w-full rounded-md border bg-card px-3 py-2 text-sm font-mono outline-none focus-visible:border-ring ${validationErrors.ipaddr ? "border-destructive" : ""}`}
+												onChange={(e) => updateRow(editingIndex, "ipaddr", e.target.value)}
+												placeholder={t("e.g. 192.168.1.1/24 or 192.168.1.1 (one per line)")}
+												spellCheck={false}
+												value={editingRow.ipaddr}
+											/>
+											{validationErrors.ipaddr && (
+												<span className="text-xs text-destructive flex items-center gap-1 font-medium">
+													<AlertCircle className="size-3 shrink-0" />
+													{validationErrors.ipaddr}
+												</span>
+											)}
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Subnet mask / CIDR")}</label>
+											<Input
+												className={`font-mono ${validationErrors.netmask ? "border-destructive" : ""}`}
+												onChange={(e) => updateRow(editingIndex, "netmask", e.target.value)}
+												placeholder="255.255.255.0"
+												value={editingRow.netmask}
+											/>
+											{validationErrors.netmask && (
+												<span className="text-xs text-destructive flex items-center gap-1 font-medium">
+													<AlertCircle className="size-3 shrink-0" />
+													{validationErrors.netmask}
+												</span>
+											)}
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Gateway")}</label>
+											<Input
+												className={`font-mono ${validationErrors.gateway ? "border-destructive" : ""}`}
+												onChange={(e) => updateRow(editingIndex, "gateway", e.target.value)}
+												placeholder="192.168.1.254"
+												value={editingRow.gateway}
+											/>
+											{validationErrors.gateway && (
+												<span className="text-xs text-destructive flex items-center gap-1 font-medium">
+													<AlertCircle className="size-3 shrink-0" />
+													{validationErrors.gateway}
+												</span>
+											)}
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Broadcast")}</label>
+											<Input
+												className="font-mono"
+												onChange={(e) => updateRow(editingIndex, "broadcast", e.target.value)}
+												placeholder="192.168.1.255"
+												value={editingRow.broadcast}
+											/>
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Gateway metric")}</label>
+											<Input
+												inputMode="numeric"
+												onChange={(e) => updateRow(editingIndex, "metric", e.target.value)}
+												placeholder="0"
+												value={editingRow.metric}
+											/>
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Force link")}</label>
+											<SelectField
+												id={`drawer-force-link-${editingIndex}`}
+												onChange={(val) => updateRow(editingIndex, "force_link", val)}
+												options={DEFAULT_FLAG_OPTIONS}
+												value={editingRow.force_link}
+											/>
+										</div>
+									</div>
+								</div>
+							)}
+
+							{/* Protocol Specific: PPPoE & PPP */}
+							{["pppoe", "ppp", "pptp", "l2tp"].includes(editingRow.proto) && (
+								<div className="space-y-4 pt-4 border-t">
+									<h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+										{t("PPP / Tunnel Settings")} ({editingRow.proto.toUpperCase()})
+									</h3>
+									<div className="grid gap-4 sm:grid-cols-2">
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">
+												{t("PAP/CHAP username")} <span className="text-destructive">*</span>
+											</label>
+											<Input
+												className={validationErrors.username ? "border-destructive" : ""}
+												onChange={(e) => updateRow(editingIndex, "username", e.target.value)}
+												placeholder={t("Broadband dial account")}
+												value={editingRow.username}
+											/>
+											{validationErrors.username && (
+												<span className="text-xs text-destructive flex items-center gap-1 font-medium">
+													<AlertCircle className="size-3 shrink-0" />
+													{validationErrors.username}
+												</span>
+											)}
+										</div>
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">
+												{t("PAP/CHAP password")} <span className="text-destructive">*</span>
+											</label>
+											<div className="relative">
+												<Input
+													className="pr-10"
+													onChange={(e) => updateRow(editingIndex, "password", e.target.value)}
+													placeholder={t("Broadband dial password")}
+													type={showPassword ? "text" : "password"}
+													value={editingRow.password}
+												/>
+												<button
+													type="button"
+													className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+													onClick={() => setShowPassword(!showPassword)}
+													tabIndex={-1}
+												>
+													{showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+												</button>
+											</div>
+										</div>
+										{editingRow.proto === "pppoe" && (
 											<>
 												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("PAP/CHAP username")}</label>
-													<Input onChange={(event) => updateRow(editingIndex, "username", event.target.value)} value={editingRow.username} />
+													<label className="text-sm font-medium">{t("Service name")}</label>
+													<Input
+														onChange={(e) => updateRow(editingIndex, "service", e.target.value)}
+														placeholder={t("Optional ISP service name")}
+														value={editingRow.service}
+													/>
 												</div>
 												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("PAP/CHAP password")}</label>
-													<Input type="password" onChange={(event) => updateRow(editingIndex, "password", event.target.value)} value={editingRow.password} />
-												</div>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("Authentication")}</label>
-													<SelectField id={`network-interface-auth-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auth", value)} options={[["", "auto"], ["pap", "PAP"], ["chap", "CHAP"]]} value={editingRow.auth ?? ""} />
-												</div>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("Enable IPv6 on PPP link")}</label>
-													<SelectField id={`network-interface-ipv6-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "ipv6", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.ipv6 ?? ""} />
-												</div>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("LCP echo failure threshold")}</label>
-													<Input onChange={(event) => updateRow(editingIndex, "keepalive", event.target.value)} placeholder={t("e.g. 5 30")} value={editingRow.keepalive} />
-												</div>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("Dial on demand (idle time)")}</label>
-													<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "demand", event.target.value)} value={editingRow.demand} />
+													<label className="text-sm font-medium">{t("Access Concentrator")}</label>
+													<Input
+														onChange={(e) => updateRow(editingIndex, "ac", e.target.value)}
+														placeholder={t("Optional AC name")}
+														value={editingRow.ac}
+													/>
 												</div>
 											</>
 										)}
 										{["pptp", "l2tp"].includes(editingRow.proto) && (
-											<div className="grid gap-2">
+											<div className="grid gap-2 sm:col-span-2">
 												<label className="text-sm font-medium">{t("VPN Server")}</label>
-												<Input onChange={(event) => updateRow(editingIndex, "server", event.target.value)} value={editingRow.server} />
+												<Input
+													onChange={(e) => updateRow(editingIndex, "server", e.target.value)}
+													placeholder="vpn.example.com"
+													value={editingRow.server}
+												/>
 											</div>
 										)}
-										{["6in4", "6to4", "6rd", "dslite", "map", "464xlat"].includes(editingRow.proto) && (
-											<>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("Local IPv6 address")}</label>
-													<Input onChange={(event) => updateRow(editingIndex, "ip6addr", event.target.value)} value={editingRow.ip6addr} />
-												</div>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("Remote IPv4/IPv6 address")}</label>
-													<Input onChange={(event) => updateRow(editingIndex, "peeraddr", event.target.value)} value={editingRow.peeraddr} />
-												</div>
-											</>
-										)}
-									</div>
-								</div>
-							)}
-							{["qmi", "ncm", "mbim", "wwan"].includes(editingRow.proto) && (
-								<div className="space-y-4">
-									<h3 className="font-semibold">{t("Cellular Settings")}</h3>
-									<div className="grid gap-4 sm:grid-cols-2">
 										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("APN")}</label>
-											<Input onChange={(event) => updateRow(editingIndex, "apn", event.target.value)} value={editingRow.apn} />
+											<label className="text-sm font-medium">{t("Enable IPv6 on PPP link")}</label>
+											<SelectField
+												id={`drawer-ipv6-${editingIndex}`}
+												onChange={(val) => updateRow(editingIndex, "ipv6", val)}
+												options={DEFAULT_FLAG_OPTIONS}
+												value={editingRow.ipv6 ?? ""}
+											/>
 										</div>
 										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("PIN")}</label>
-											<Input type="password" onChange={(event) => updateRow(editingIndex, "pincode", event.target.value)} value={editingRow.pincode} />
+											<label className="text-sm font-medium">{t("LCP echo failure threshold")}</label>
+											<Input
+												onChange={(e) => updateRow(editingIndex, "keepalive", e.target.value)}
+												placeholder="5 30"
+												value={editingRow.keepalive}
+											/>
 										</div>
 										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Authentication")}</label>
-											<SelectField id={`network-interface-cellular-auth-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "auth", value)} options={[["", "none"], ["pap", "PAP"], ["chap", "CHAP"], ["both", "PAP/CHAP"]]} value={editingRow.auth ?? ""} />
-										</div>
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Username")}</label>
-											<Input onChange={(event) => updateRow(editingIndex, "username", event.target.value)} value={editingRow.username} />
-										</div>
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Password")}</label>
-											<Input type="password" onChange={(event) => updateRow(editingIndex, "password", event.target.value)} value={editingRow.password} />
+											<label className="text-sm font-medium">{t("Dial on demand (idle time)")}</label>
+											<Input
+												inputMode="numeric"
+												onChange={(e) => updateRow(editingIndex, "demand", e.target.value)}
+												placeholder="0"
+												value={editingRow.demand}
+											/>
 										</div>
 									</div>
 								</div>
 							)}
-							{(editingRow.proto === "static" || editingRow.proto === "dhcpv6") && (
-								<div className="space-y-4">
-									<h3 className="font-semibold">{t("IPv6 Settings")}</h3>
-									<div className="grid gap-4 sm:grid-cols-2">
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("IPv6 assign length")}</label>
-											<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "ip6assign", event.target.value)} value={editingRow.ip6assign} />
-										</div>
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("IPv6 hint")}</label>
-											<Input onChange={(event) => updateRow(editingIndex, "ip6hint", event.target.value)} value={editingRow.ip6hint} />
-										</div>
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("IPv6 suffix")}</label>
-											<Input onChange={(event) => updateRow(editingIndex, "ip6ifaceid", event.target.value)} value={editingRow.ip6ifaceid} />
-										</div>
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("IPv6 classes")}</label>
-											<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ip6class", event.target.value)} spellCheck={false} value={editingRow.ip6class} />
-										</div>
-										<div className="grid gap-2 sm:col-span-2">
-											<label className="text-sm font-medium">{t("IPv6 routed prefixes")}</label>
-											<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "ip6prefix", event.target.value)} spellCheck={false} value={editingRow.ip6prefix} />
-										</div>
-									</div>
-								</div>
-							)}
+
+							{/* Advanced Settings */}
 							{editingRow.proto !== "none" && (
-								<div className="space-y-4">
-									<h3 className="font-semibold">{t("Advanced Settings")}</h3>
+								<div className="space-y-4 pt-4 border-t">
+									<h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+										{t("Advanced Settings")}
+									</h3>
 									<div className="grid gap-4 sm:grid-cols-2">
 										<div className="grid gap-2 sm:col-span-2">
 											<label className="text-sm font-medium">{t("DNS servers")}</label>
-											<textarea className="min-h-[80px] w-full rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring" onChange={(event) => updateRow(editingIndex, "dns", event.target.value)} spellCheck={false} value={editingRow.dns} />
-										</div>
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("DNS weight")}</label>
-											<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "dns_metric", event.target.value)} value={editingRow.dns_metric} />
-										</div>
-										<div className="grid gap-2">
-											<label className="text-sm font-medium">{t("Use custom DNS (Peer DNS)")}</label>
-											<SelectField id={`network-interface-peerdns-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "peerdns", value)} options={[["1", "Yes"], ["0", "No"]]} value={editingRow.peerdns} />
+											<textarea
+												className="min-h-[72px] w-full rounded-md border bg-card px-3 py-2 text-sm font-mono outline-none focus-visible:border-ring"
+												onChange={(e) => updateRow(editingIndex, "dns", e.target.value)}
+												placeholder={t("e.g. 8.8.8.8, 1.1.1.1 (one per line)")}
+												spellCheck={false}
+												value={editingRow.dns}
+											/>
 										</div>
 										<div className="grid gap-2">
 											<label className="text-sm font-medium">{t("Override MAC address")}</label>
-											<Input onChange={(event) => updateRow(editingIndex, "macaddr", event.target.value)} placeholder={t("e.g. 00:11:22:33:44:55")} value={editingRow.macaddr} />
+											<Input
+												className="font-mono"
+												onChange={(e) => updateRow(editingIndex, "macaddr", e.target.value)}
+												placeholder="00:11:22:33:44:55"
+												value={editingRow.macaddr}
+											/>
 										</div>
 										<div className="grid gap-2">
 											<label className="text-sm font-medium">{t("Override MTU")}</label>
-											<Input inputMode="numeric" onChange={(event) => updateRow(editingIndex, "mtu", event.target.value)} placeholder={t("e.g. 1500")} value={editingRow.mtu} />
+											<Input
+												className={validationErrors.mtu ? "border-destructive" : ""}
+												inputMode="numeric"
+												onChange={(e) => updateRow(editingIndex, "mtu", e.target.value)}
+												placeholder={editingRow.proto === "pppoe" ? "1492" : "1500"}
+												value={editingRow.mtu}
+											/>
+											{validationErrors.mtu && (
+												<span className="text-xs text-destructive flex items-center gap-1 font-medium">
+													<AlertCircle className="size-3 shrink-0" />
+													{validationErrors.mtu}
+												</span>
+											)}
 										</div>
-										{(editingRow.proto === "dhcpv6" || editingRow.proto === "dhcp") && (
+										<div className="grid gap-2">
+											<label className="text-sm font-medium">{t("Use custom DNS (Peer DNS)")}</label>
+											<SelectField
+												id={`drawer-peerdns-${editingIndex}`}
+												onChange={(val) => updateRow(editingIndex, "peerdns", val)}
+												options={[["1", t("Yes")], ["0", t("No")]]}
+												value={editingRow.peerdns}
+											/>
+										</div>
+										{(editingRow.proto === "dhcp" || editingRow.proto === "dhcpv6") && (
 											<div className="grid gap-2">
 												<label className="text-sm font-medium">{t("Delegate IPv6 prefixes")}</label>
-												<SelectField id={`network-interface-delegate-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "delegate", value)} options={[["1", "Yes"], ["0", "No"]]} value={editingRow.delegate} />
+												<SelectField
+													id={`drawer-delegate-${editingIndex}`}
+													onChange={(val) => updateRow(editingIndex, "delegate", val)}
+													options={[["1", t("Yes")], ["0", t("No")]]}
+													value={editingRow.delegate}
+												/>
 											</div>
-										)}
-										{editingRow.proto === "dhcp" && (
-											<>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("DHCP hostname")}</label>
-													<Input onChange={(event) => updateRow(editingIndex, "hostname", event.target.value)} value={editingRow.hostname} />
-												</div>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("DHCP client ID")}</label>
-													<Input onChange={(event) => updateRow(editingIndex, "clientid", event.target.value)} value={editingRow.clientid} />
-												</div>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("DHCP vendor class")}</label>
-													<Input onChange={(event) => updateRow(editingIndex, "vendorid", event.target.value)} value={editingRow.vendorid} />
-												</div>
-												<div className="grid gap-2">
-													<label className="text-sm font-medium">{t("No release")}</label>
-													<SelectField id={`network-interface-norelease-${editingIndex}`} onChange={(value) => updateRow(editingIndex, "norelease", value)} options={DEFAULT_FLAG_OPTIONS} value={editingRow.norelease} />
-												</div>
-											</>
 										)}
 									</div>
 								</div>
 							)}
 						</div>
-						<div className="sticky bottom-0 -mx-6 -mb-6 border-t bg-card px-6 py-4 flex justify-end gap-2 mt-auto shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-							<Button type="button" variant="outline" onClick={() => setEditingIndex(null)}>{t("Done")}</Button>
-							<Button disabled={saving} type="submit">{t("Apply & Save All")}</Button>
+
+						{/* Sticky Footer */}
+						<div className="sticky bottom-0 -mx-6 -mb-6 border-t bg-card px-6 py-4 flex items-center justify-between mt-auto shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+							<Button onClick={() => setEditingIndex(null)} type="button" variant="outline">
+								{t("Done")}
+							</Button>
+							<Button disabled={saving} type="submit">
+								{saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+								{t("Save & Apply")}
+							</Button>
 						</div>
 					</form>
 				)}
 			</Drawer>
-		</section>
-	);
-}
-
-function OldNetworkInterfaceEditor({
-	firewallZones,
-	interfaces,
-	onSaved,
-}: {
-	firewallZones: ConfigSection[];
-	interfaces: ConfigSection[];
-	onSaved: (sections: ConfigSection[], firewallSections?: ConfigSection[]) => void;
-}) {
-	const [rows, setRows] = useState(() => interfaces.map((section) => networkInterfaceValues(section, firewallZones)));
-	const [savedRows, setSavedRows] = useState(rows);
-	const [saving, setSaving] = useState(false);
-	const dirty = JSON.stringify(rows) !== JSON.stringify(savedRows);
-	const visibleRows = rows
-		.map((row, index) => ({ row, index }))
-		.filter(({ row }) => row.remove !== "1");
-	const firewallZoneOptions = useMemo<[string, string][]>(
-		() => [
-			["", "Unspecified"],
-			...firewallZones.map((zone) => {
-				const name = rawValue(zone.values.name || zone.name);
-				return [name, name] as [string, string];
-			}),
-			["__custom", "Create new..."],
-		],
-		[firewallZones],
-	);
-
-	function updateRow(index: number, field: keyof NetworkInterfaceConfig, value: string) {
-		setRows((current) =>
-			current.map((row, rowIndex) =>
-				rowIndex === index
-					? {
-							...row,
-							[field]: value,
-						}
-					: row,
-			),
-		);
-	}
-
-	function addRow() {
-		setRows((current) => [...current, newNetworkInterfaceRow(uniqueNetworkInterfaceName(current))]);
-	}
-
-	function removeRow(index: number) {
-		setRows((current) => {
-			const row = current[index];
-
-			if (!row || row.isNew === "1") {
-				return current.filter((_, rowIndex) => rowIndex !== index);
-			}
-
-			return current.map((item, rowIndex) => (rowIndex === index ? { ...item, remove: "1" } : item));
-		});
-	}
-
-	async function submit(event: FormEvent<HTMLFormElement>) {
-		event.preventDefault();
-		setSaving(true);
-		const result = await saveNetworkInterfaces(rows);
-		setSaving(false);
-
-		if (!result.saved) {
-			toast.error(result.message);
-			return;
-		}
-
-		const nextRows = result.interfaces.map(normalizeNetworkInterface);
-		toast.success(result.message);
-		setRows(nextRows);
-		setSavedRows(nextRows);
-		onSaved(result.sections, result.firewallSections);
-	}
-
-	return (
-		<section className="grid gap-3">
-			<div className="flex items-center justify-between gap-3">
-				<div>
-					<h2 className="text-base font-semibold">Interface configuration</h2>
-					<p className="text-sm text-muted-foreground">Edit common UCI interface fields while preserving advanced options.</p>
-				</div>
-				<div className="flex items-center gap-2">
-					<span className="text-xs text-muted-foreground">{visibleRows.length} interfaces</span>
-					<Button onClick={addRow} size="sm" type="button" variant="outline">
-						<Plus className="size-4" />
-						Add interface
-					</Button>
-				</div>
-			</div>
-			<form className="grid gap-3" onSubmit={(event) => void submit(event)}>
-				<div className="overflow-x-auto rounded-md border bg-card">
-					<table className="w-full min-w-[180rem] text-left text-sm">
-						<thead className="border-b text-xs uppercase text-muted-foreground">
-							<tr>
-								<th className="px-3 py-2 font-medium">Interface</th>
-								<th className="px-3 py-2 font-medium">Firewall zone</th>
-								<th className="px-3 py-2 font-medium">Protocol</th>
-								<th className="px-3 py-2 font-medium">Device</th>
-								<th className="px-3 py-2 font-medium">Disabled</th>
-								<th className="px-3 py-2 font-medium">Boot</th>
-								<th className="px-3 py-2 font-medium">Force link</th>
-								<th className="px-3 py-2 font-medium">Default route</th>
-								<th className="px-3 py-2 font-medium">IPv4 address</th>
-								<th className="px-3 py-2 font-medium">Netmask</th>
-								<th className="px-3 py-2 font-medium">Gateway</th>
-								<th className="px-3 py-2 font-medium">Broadcast</th>
-								<th className="px-3 py-2 font-medium">IPv6 assign</th>
-								<th className="px-3 py-2 font-medium">IPv6 hint</th>
-								<th className="px-3 py-2 font-medium">IPv6 suffix</th>
-								<th className="px-3 py-2 font-medium">IPv6 classes</th>
-								<th className="px-3 py-2 font-medium">IPv6 prefixes</th>
-								<th className="px-3 py-2 font-medium">DNS</th>
-								<th className="px-3 py-2 font-medium">DNS weight</th>
-								<th className="px-3 py-2 font-medium">Metric</th>
-								<th className="px-3 py-2 font-medium">Peer DNS</th>
-								<th className="px-3 py-2 font-medium">Delegate</th>
-								<th className="px-3 py-2 font-medium">Hostname</th>
-								<th className="px-3 py-2 font-medium">Client ID</th>
-								<th className="px-3 py-2 font-medium">Vendor</th>
-								<th className="px-3 py-2 font-medium">No release</th>
-								<th className="px-3 py-2 font-medium">Actions</th>
-							</tr>
-						</thead>
-						<tbody>
-							{visibleRows.map(({ row, index }) => (
-								<tr className="border-b align-top last:border-0" key={`network-interface-${index}`}>
-									<td className="px-3 py-3 font-medium">
-										{row.isNew === "1" ? (
-											<Input aria-label="Interface name" onChange={(event) => updateRow(index, "section", event.target.value)} value={row.section} />
-										) : (
-											row.section
-										)}
-									</td>
-									<td className="px-3 py-3">
-										<div className="grid gap-2">
-											<SelectField
-												id={`network-interface-zone-${index}`}
-												onChange={(value) => updateRow(index, "zone", value)}
-												options={firewallZoneOptions}
-												value={row.zone ?? ""}
-											/>
-											{row.zone === "__custom" ? (
-												<Input
-													aria-label="New firewall zone name"
-													onChange={(event) => updateRow(index, "zoneName", event.target.value)}
-													placeholder="zone name"
-													value={row.zoneName ?? ""}
-												/>
-											) : null}
-										</div>
-									</td>
-									<td className="px-3 py-3">
-										<NetworkProtocolField
-											id={`network-interface-proto-${index}`}
-											onChange={(value) => updateRow(index, "proto", value)}
-											value={row.proto}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<Input aria-label="Device" onChange={(event) => updateRow(index, "device", event.target.value)} value={row.device} />
-									</td>
-									<td className="px-3 py-3">
-										<SelectField
-											id={`network-interface-disabled-${index}`}
-											onChange={(value) => updateRow(index, "disabled", value)}
-											options={DEFAULT_FLAG_OPTIONS}
-											value={row.disabled}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<SelectField
-											id={`network-interface-auto-${index}`}
-											onChange={(value) => updateRow(index, "auto", value)}
-											options={DEFAULT_FLAG_OPTIONS}
-											value={row.auto}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<SelectField
-											id={`network-interface-force-link-${index}`}
-											onChange={(value) => updateRow(index, "force_link", value)}
-											options={DEFAULT_FLAG_OPTIONS}
-											value={row.force_link}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<SelectField
-											id={`network-interface-defaultroute-${index}`}
-											onChange={(value) => updateRow(index, "defaultroute", value)}
-											options={DEFAULT_FLAG_OPTIONS}
-											value={row.defaultroute}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<textarea
-											aria-label="IPv4 address"
-											className="min-h-10 w-48 rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring"
-											onChange={(event) => updateRow(index, "ipaddr", event.target.value)}
-											spellCheck={false}
-											value={row.ipaddr}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<Input aria-label="Netmask" onChange={(event) => updateRow(index, "netmask", event.target.value)} value={row.netmask} />
-									</td>
-									<td className="px-3 py-3">
-										<Input aria-label="Gateway" onChange={(event) => updateRow(index, "gateway", event.target.value)} value={row.gateway} />
-									</td>
-									<td className="px-3 py-3">
-										<Input aria-label="Broadcast" onChange={(event) => updateRow(index, "broadcast", event.target.value)} value={row.broadcast} />
-									</td>
-									<td className="px-3 py-3">
-										<Input
-											aria-label="IPv6 assignment length"
-											inputMode="numeric"
-											onChange={(event) => updateRow(index, "ip6assign", event.target.value)}
-											value={row.ip6assign}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<Input aria-label="IPv6 assignment hint" onChange={(event) => updateRow(index, "ip6hint", event.target.value)} value={row.ip6hint} />
-									</td>
-									<td className="px-3 py-3">
-										<Input aria-label="IPv6 suffix" onChange={(event) => updateRow(index, "ip6ifaceid", event.target.value)} value={row.ip6ifaceid} />
-									</td>
-									<td className="px-3 py-3">
-										<textarea
-											aria-label="IPv6 prefix classes"
-											className="min-h-10 w-48 rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring"
-											onChange={(event) => updateRow(index, "ip6class", event.target.value)}
-											spellCheck={false}
-											value={row.ip6class}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<textarea
-											aria-label="IPv6 routed prefixes"
-											className="min-h-10 w-48 rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring"
-											onChange={(event) => updateRow(index, "ip6prefix", event.target.value)}
-											spellCheck={false}
-											value={row.ip6prefix}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<textarea
-											aria-label="DNS servers"
-											className="min-h-10 w-48 rounded-md border bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring"
-											onChange={(event) => updateRow(index, "dns", event.target.value)}
-											spellCheck={false}
-											value={row.dns}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<Input
-											aria-label="DNS weight"
-											inputMode="numeric"
-											onChange={(event) => updateRow(index, "dns_metric", event.target.value)}
-											value={row.dns_metric}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<Input
-											aria-label="Gateway metric"
-											inputMode="numeric"
-											onChange={(event) => updateRow(index, "metric", event.target.value)}
-											value={row.metric}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<SelectField
-											id={`network-interface-peerdns-${index}`}
-											onChange={(value) => updateRow(index, "peerdns", value)}
-											options={[
-												["1", "Yes"],
-												["0", "No"],
-											]}
-											value={row.peerdns}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<SelectField
-											id={`network-interface-delegate-${index}`}
-											onChange={(value) => updateRow(index, "delegate", value)}
-											options={[
-												["1", "Yes"],
-												["0", "No"],
-											]}
-											value={row.delegate}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<Input aria-label="DHCP hostname" onChange={(event) => updateRow(index, "hostname", event.target.value)} value={row.hostname} />
-									</td>
-									<td className="px-3 py-3">
-										<Input aria-label="DHCP client ID" onChange={(event) => updateRow(index, "clientid", event.target.value)} value={row.clientid} />
-									</td>
-									<td className="px-3 py-3">
-										<Input aria-label="DHCP vendor class" onChange={(event) => updateRow(index, "vendorid", event.target.value)} value={row.vendorid} />
-									</td>
-									<td className="px-3 py-3">
-										<SelectField
-											id={`network-interface-norelease-${index}`}
-											onChange={(value) => updateRow(index, "norelease", value)}
-											options={DEFAULT_FLAG_OPTIONS}
-											value={row.norelease}
-										/>
-									</td>
-									<td className="px-3 py-3">
-										<Button
-											aria-label={`Remove ${row.section}`}
-											disabled={row.section === "loopback"}
-											onClick={() => removeRow(index)}
-											size="icon"
-											type="button"
-											variant="ghost"
-										>
-											<Trash2 className="size-4" />
-										</Button>
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
-				<div className="flex justify-end gap-2">
-					<Button disabled={!dirty || saving} onClick={() => setRows(savedRows)} type="button" variant="outline">
-						Cancel
-					</Button>
-					<Button disabled={!dirty || saving} type="submit">
-						Save
-					</Button>
-				</div>
-			</form>
 		</section>
 	);
 }
@@ -8070,6 +8365,8 @@ function networkInterfaceValues(section: ConfigSection, firewallZones: ConfigSec
 		norelease: rawValue(section.values.norelease),
 		username: rawValue(section.values.username),
 		password: rawValue(section.values.password),
+		service: rawValue(section.values.service),
+		ac: rawValue(section.values.ac),
 		auth: rawValue(section.values.auth),
 		server: rawValue(section.values.server),
 		apn: rawValue(section.values.apn),
@@ -8117,6 +8414,8 @@ function normalizeNetworkInterface(row: NetworkInterfaceConfig): NetworkInterfac
 		norelease: row.norelease === "1" || row.norelease === "0" ? row.norelease : "",
 		username: row.username ?? "",
 		password: row.password ?? "",
+		service: row.service ?? "",
+		ac: row.ac ?? "",
 		auth: row.auth ?? "",
 		server: row.server ?? "",
 		apn: row.apn ?? "",
@@ -8138,12 +8437,12 @@ function newNetworkInterfaceRow(section: string): NetworkInterfaceConfig {
 		isNew: "1",
 		zone: "",
 		zoneName: "",
-		proto: "none",
+		proto: "dhcp",
 		device: "",
-		disabled: "1",
-		auto: "0",
+		disabled: "0",
+		auto: "1",
 		force_link: "",
-		defaultroute: "",
+		defaultroute: "1",
 		ipaddr: "",
 		netmask: "",
 		gateway: "",
@@ -8164,6 +8463,8 @@ function newNetworkInterfaceRow(section: string): NetworkInterfaceConfig {
 		norelease: "",
 		username: "",
 		password: "",
+		service: "",
+		ac: "",
 		auth: "",
 		server: "",
 		apn: "",

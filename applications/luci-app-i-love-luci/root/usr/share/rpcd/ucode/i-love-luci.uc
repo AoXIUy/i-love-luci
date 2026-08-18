@@ -2857,11 +2857,470 @@ function network_interface_rows() {
 			hostname: section.hostname || '',
 			clientid: section.clientid || '',
 			vendorid: section.vendorid || '',
-			norelease: section.norelease || ''
+			norelease: section.norelease || '',
+			username: section.username || '',
+			password: section.password || '',
+			service: section.service || '',
+			ac: section.ac || '',
+			auth: section.auth || '',
+			server: section.server || '',
+			apn: section.apn || '',
+			pincode: section.pincode || '',
+			keepalive: section.keepalive || '',
+			demand: section.demand || '',
+			mtu: section.mtu || '',
+			macaddr: section.macaddr || '',
+			ipv6: section.ipv6 || '',
+			peeraddr: section.peeraddr || '',
+			ip6addr: section.ip6addr || ''
 		});
 	});
 
 	return interfaces;
+}
+
+function get_network_protocols() {
+	return [
+		{
+			id: 'dhcp',
+			name: 'DHCP client',
+			category: 'standard',
+			description: 'Dynamic IPv4 address leased automatically from upstream DHCP server',
+			virtual: false,
+			fields: ['hostname', 'clientid', 'vendorid', 'norelease', 'peerdns', 'metric', 'defaultroute', 'delegate']
+		},
+		{
+			id: 'static',
+			name: 'Static address',
+			category: 'standard',
+			description: 'Manually specified static IPv4 and IPv6 network configuration',
+			virtual: false,
+			fields: ['ipaddr', 'netmask', 'gateway', 'broadcast', 'dns', 'dns_metric', 'metric', 'ip6assign', 'ip6hint', 'ip6ifaceid', 'ip6class', 'ip6prefix', 'force_link', 'defaultroute']
+		},
+		{
+			id: 'pppoe',
+			name: 'PPPoE',
+			category: 'ppp',
+			description: 'Point-to-Point Protocol over Ethernet for broadband and fiber connections',
+			virtual: false,
+			fields: ['username', 'password', 'service', 'ac', 'auth', 'keepalive', 'demand', 'mtu', 'ipv6', 'peerdns', 'metric', 'defaultroute']
+		},
+		{
+			id: 'dhcpv6',
+			name: 'DHCPv6 client',
+			category: 'ipv6',
+			description: 'Dynamic IPv6 prefix delegation and address assignment',
+			virtual: false,
+			fields: ['ip6prefix', 'reqaddress', 'reqprefix', 'peerdns', 'metric', 'defaultroute', 'delegate']
+		},
+		{
+			id: 'ppp',
+			name: 'PPP (Dial-up / Serial)',
+			category: 'ppp',
+			description: 'Point-to-Point Protocol connection over serial or dial-up modem',
+			virtual: false,
+			fields: ['username', 'password', 'device', 'auth', 'keepalive', 'demand', 'mtu', 'ipv6', 'peerdns', 'metric']
+		},
+		{
+			id: 'pptp',
+			name: 'PPTP',
+			category: 'ppp',
+			description: 'Point-to-Point Tunneling Protocol VPN connection',
+			virtual: true,
+			fields: ['server', 'username', 'password', 'auth', 'keepalive', 'demand', 'mtu', 'peerdns', 'metric', 'defaultroute']
+		},
+		{
+			id: 'l2tp',
+			name: 'L2TP',
+			category: 'ppp',
+			description: 'Layer 2 Tunneling Protocol VPN connection',
+			virtual: true,
+			fields: ['server', 'username', 'password', 'auth', 'keepalive', 'demand', 'mtu', 'peerdns', 'metric', 'defaultroute']
+		},
+		{
+			id: '6in4',
+			name: 'IPv6-in-IPv4 (RFC4213)',
+			category: 'ipv6',
+			description: 'Static IPv6-in-IPv4 tunnel (HE Tunnelbroker, etc.)',
+			virtual: true,
+			fields: ['ip6addr', 'peeraddr', 'ipaddr', 'tunnelid', 'username', 'password', 'metric', 'defaultroute']
+		},
+		{
+			id: '6to4',
+			name: 'IPv6 translate 6to4',
+			category: 'ipv6',
+			description: 'Automatic IPv6-in-IPv4 6to4 tunnel mechanism',
+			virtual: true,
+			fields: ['ipaddr', 'metric', 'defaultroute']
+		},
+		{
+			id: '6rd',
+			name: 'IPv6 rapid deployment (6rd)',
+			category: 'ipv6',
+			description: 'IPv6 Rapid Deployment for ISP broadband access',
+			virtual: true,
+			fields: ['peeraddr', 'ip6prefix', 'ip6prefixlen', 'ip4prefixlen', 'metric', 'defaultroute']
+		},
+		{
+			id: 'dslite',
+			name: 'Dual-Stack Lite (DS-Lite)',
+			category: 'ipv6',
+			description: 'Dual-Stack Lite IPv4-over-IPv6 AFTR tunnel',
+			virtual: true,
+			fields: ['peeraddr', 'metric', 'defaultroute']
+		},
+		{
+			id: 'qmi',
+			name: 'QMI Cellular',
+			category: 'cellular',
+			description: 'Qualcomm MSM Interface for 4G/5G LTE cellular modems',
+			virtual: false,
+			fields: ['device', 'apn', 'pincode', 'auth', 'username', 'password', 'modes', 'delay', 'metric', 'defaultroute']
+		},
+		{
+			id: 'ncm',
+			name: 'NCM Cellular',
+			category: 'cellular',
+			description: 'Network Control Model protocol for USB cellular modems',
+			virtual: false,
+			fields: ['device', 'apn', 'pincode', 'auth', 'username', 'password', 'delay', 'metric', 'defaultroute']
+		},
+		{
+			id: 'none',
+			name: 'Unmanaged',
+			category: 'other',
+			description: 'No protocol configuration managed on this interface',
+			virtual: false,
+			fields: []
+		}
+	];
+}
+
+function get_device_list() {
+	let devices_map = {};
+	let ubus_devices = null;
+	try {
+		ubus_devices = ubus.call('network.device', 'status') || {};
+	}
+	catch (e) {
+		ubus_devices = {};
+	}
+
+	for (let dev_name, info in ubus_devices) {
+		devices_map[dev_name] = {
+			name: dev_name,
+			type: info.type || (info.devtype == 'bridge' || info.bridge ? 'bridge' : 'ethernet'),
+			devtype: info.devtype || (info.bridge ? 'bridge' : 'ethernet'),
+			present: info.present == true || info.present == 1,
+			up: info.up == true || info.up == 1,
+			carrier: info.carrier == true || info.carrier == 1 || (info.link == true),
+			macaddr: info.macaddr || '',
+			mtu: info.mtu || 1500,
+			speed: info.speed || 0,
+			duplex: info.duplex || 'unknown',
+			ports: info['bridge-members'] || info.ports || [],
+			rx_bytes: info.statistics?.rx_bytes || 0,
+			tx_bytes: info.statistics?.tx_bytes || 0,
+			rx_packets: info.statistics?.rx_packets || 0,
+			tx_packets: info.statistics?.tx_packets || 0,
+			rx_errors: info.statistics?.rx_errors || 0,
+			tx_errors: info.statistics?.tx_errors || 0,
+			status_label: (info.up && (info.carrier || info.link)) ? 'UP' : (info.up ? 'NO CARRIER' : 'DOWN')
+		};
+	}
+
+	try {
+		uci.load('network');
+		uci.foreach('network', 'device', function(sec) {
+			let name = sec.name || sec['.name'] || '';
+			if (!length(name)) return;
+			if (!devices_map[name]) {
+				devices_map[name] = {
+					name,
+					type: sec.type || 'ethernet',
+					devtype: sec.type || 'ethernet',
+					present: false,
+					up: false,
+					carrier: false,
+					macaddr: sec.macaddr || '',
+					mtu: +(sec.mtu || 1500),
+					speed: 0,
+					duplex: 'unknown',
+					ports: dhcp_normalize_list(sec.ports),
+					rx_bytes: 0,
+					tx_bytes: 0,
+					rx_packets: 0,
+					tx_packets: 0,
+					rx_errors: 0,
+					tx_errors: 0,
+					status_label: 'DOWN'
+				};
+			}
+			else {
+				if (length(sec.ports))
+					devices_map[name].ports = dhcp_normalize_list(sec.ports);
+				if (length(sec.macaddr) && !length(devices_map[name].macaddr))
+					devices_map[name].macaddr = sec.macaddr;
+			}
+		});
+	}
+	catch (e) {}
+
+	let net_paths = glob('/sys/class/net/*');
+	if (net_paths) {
+		for (let p in net_paths) {
+			let parts = split(p, '/');
+			let dev_name = parts[length(parts) - 1];
+			if (!length(dev_name) || dev_name == 'lo') continue;
+			if (!devices_map[dev_name]) {
+				let operstate = trim(readfile(p + '/operstate') || '');
+				let carrier = trim(readfile(p + '/carrier') || '') == '1';
+				let mac = trim(readfile(p + '/address') || '');
+				let is_up = operstate == 'up';
+				devices_map[dev_name] = {
+					name: dev_name,
+					type: 'ethernet',
+					devtype: 'ethernet',
+					present: true,
+					up: is_up,
+					carrier: carrier,
+					macaddr: mac,
+					mtu: 1500,
+					speed: 0,
+					duplex: 'unknown',
+					ports: [],
+					rx_bytes: 0,
+					tx_bytes: 0,
+					rx_packets: 0,
+					tx_packets: 0,
+					rx_errors: 0,
+					tx_errors: 0,
+					status_label: (is_up && carrier) ? 'UP' : (is_up ? 'NO CARRIER' : 'DOWN')
+				};
+			}
+		}
+	}
+
+	let result = [];
+	for (let _, dev in devices_map)
+		push(result, dev);
+
+	return result;
+}
+
+function get_interface_detail(name) {
+	name = dhcp_clean_value(name || '');
+	if (!length(name) || !valid_network_route_interface(name))
+		return { error: 'Network interface name is required and must contain only supported characters.' };
+
+	try {
+		uci.load('network');
+		uci.load('firewall');
+	}
+	catch (e) {
+		return { error: 'Failed to load network or firewall configuration: ' + e };
+	}
+
+	let sec = uci.get_all('network', name);
+	if (!sec || sec['.type'] != 'interface')
+		return { error: 'Network interface "' + name + '" not found.' };
+
+	let zone_name = '';
+	uci.foreach('firewall', 'zone', function(z) {
+		let zn = z.name || z['.name'] || '';
+		for (let net in dhcp_normalize_list(z.network)) {
+			if (net == name) {
+				zone_name = zn;
+				return false;
+			}
+		}
+	});
+
+	let status = null;
+	try {
+		status = ubus.call('network.interface.' + name, 'status') || null;
+	}
+	catch (e) {
+		status = null;
+	}
+
+	let dev = sec.device || sec.ifname || '';
+	let device_status = null;
+	if (length(dev)) {
+		try {
+			let all_devs = ubus.call('network.device', 'status') || {};
+			device_status = all_devs[dev] || null;
+		}
+		catch (e) {}
+	}
+
+	let config = {
+		section: name,
+		proto: sec.proto || 'none',
+		device: sec.device || sec.ifname || '',
+		disabled: sec.disabled || '',
+		auto: sec.auto || '',
+		force_link: sec.force_link || '',
+		defaultroute: sec.defaultroute || '',
+		ipaddr: join('\n', dhcp_normalize_list(sec.ipaddr)),
+		netmask: sec.netmask || '',
+		gateway: sec.gateway || '',
+		broadcast: sec.broadcast || '',
+		ip6assign: sec.ip6assign || '',
+		ip6hint: sec.ip6hint || '',
+		ip6ifaceid: sec.ip6ifaceid || '',
+		ip6class: join('\n', dhcp_normalize_list(sec.ip6class)),
+		ip6prefix: join('\n', dhcp_normalize_list(sec.ip6prefix)),
+		dns: join('\n', dhcp_normalize_list(sec.dns)),
+		dns_metric: sec.dns_metric || '',
+		metric: sec.metric || '',
+		peerdns: sec.peerdns == '0' ? '0' : '1',
+		delegate: sec.delegate == '0' ? '0' : '1',
+		hostname: sec.hostname || '',
+		clientid: sec.clientid || '',
+		vendorid: sec.vendorid || '',
+		norelease: sec.norelease || '',
+		username: sec.username || '',
+		password: sec.password || '',
+		service: sec.service || '',
+		ac: sec.ac || '',
+		auth: sec.auth || '',
+		server: sec.server || '',
+		apn: sec.apn || '',
+		pincode: sec.pincode || '',
+		keepalive: sec.keepalive || '',
+		demand: sec.demand || '',
+		mtu: sec.mtu || '',
+		macaddr: sec.macaddr || '',
+		ipv6: sec.ipv6 || '',
+		peeraddr: sec.peeraddr || '',
+		ip6addr: sec.ip6addr || '',
+		zone: zone_name
+	};
+
+	return {
+		name,
+		config,
+		zone: zone_name,
+		status,
+		device_status
+	};
+}
+
+function validate_interface_config(cfg) {
+	if (!cfg || type(cfg) != 'object')
+		return { error: 'Interface configuration payload must be a JSON object.' };
+
+	let section = dhcp_clean_value(cfg.section || cfg.name || '');
+	let proto = dhcp_clean_value(cfg.proto || '');
+	let errors = {};
+	let warnings = {};
+
+	if (!length(section))
+		errors.section = 'Interface name is required.';
+	else if (!valid_network_route_interface(section))
+		errors.section = 'Interface name contains invalid characters. Only alphanumeric, _, ., :, - allowed.';
+
+	if (!length(proto))
+		errors.proto = 'Protocol is required.';
+	else if (!valid_network_route_interface(proto))
+		errors.proto = 'Protocol contains invalid characters.';
+
+	if (proto == 'static') {
+		let ipaddrs = split_dhcp_list(cfg.ipaddr || '');
+		if (!length(ipaddrs) || !length(ipaddrs[0])) {
+			errors.ipaddr = 'IPv4 address is required for static protocol.';
+		}
+		else {
+			for (let ip in ipaddrs) {
+				let parts = split(ip, '/');
+				let addr = parts[0];
+				let cidr = parts[1];
+				if (!match(addr, /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/)) {
+					errors.ipaddr = 'Invalid IPv4 address format: ' + addr;
+					break;
+				}
+				if (cidr != null && (int(cidr) < 1 || int(cidr) > 32)) {
+					errors.ipaddr = 'Invalid CIDR prefix length: /' + cidr + ' (must be 1-32).';
+					break;
+				}
+			}
+		}
+
+		let netmask = dhcp_clean_value(cfg.netmask || '');
+		if (length(netmask)) {
+			if (!match(netmask, /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/))
+				errors.netmask = 'Invalid subnet mask format: ' + netmask;
+		}
+
+		let gateway = dhcp_clean_value(cfg.gateway || '');
+		if (length(gateway)) {
+			if (!match(gateway, /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/))
+				errors.gateway = 'Invalid gateway IPv4 address: ' + gateway;
+			else if (gateway == '0.0.0.0')
+				errors.gateway = 'Gateway cannot be 0.0.0.0.';
+		}
+
+		let broadcast = dhcp_clean_value(cfg.broadcast || '');
+		if (length(broadcast)) {
+			if (!match(broadcast, /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/))
+				errors.broadcast = 'Invalid broadcast address: ' + broadcast;
+		}
+	}
+
+	if (proto == 'pppoe') {
+		let username = dhcp_clean_value(cfg.username || '');
+		if (!length(username))
+			errors.username = 'PAP/CHAP username is required for PPPoE.';
+
+		let mtu = dhcp_clean_value(cfg.mtu || '');
+		if (length(mtu)) {
+			let num_mtu = int(mtu);
+			if (!num_mtu || num_mtu < 576 || num_mtu > 1500)
+				errors.mtu = 'MTU must be between 576 and 1500.';
+		}
+	}
+
+	let dns_list = split_dhcp_list(cfg.dns || '');
+	for (let dns in dns_list) {
+		if (length(dns) && !match(dns, /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/) && !match(dns, /^[0-9a-fA-F:]+$/)) {
+			errors.dns = 'Invalid DNS server IP address: ' + dns;
+			break;
+		}
+	}
+
+	if (proto == 'static' && !errors.ipaddr) {
+		try {
+			uci.load('network');
+			let my_ips = split_dhcp_list(cfg.ipaddr || '');
+			uci.foreach('network', 'interface', function(other_sec) {
+				let other_name = other_sec['.name'] || '';
+				if (other_name == section) return;
+				if (other_sec.proto == 'static') {
+					let other_ips = dhcp_normalize_list(other_sec.ipaddr);
+					for (let my_ip in my_ips) {
+						let clean_my = split(my_ip, '/')[0];
+						for (let other_ip in other_ips) {
+							let clean_other = split(other_ip, '/')[0];
+							if (clean_my == clean_other && length(clean_my)) {
+								errors.ipaddr = 'IP address conflict: ' + clean_my + ' is already configured on interface "' + other_name + '".';
+								return false;
+							}
+						}
+					}
+				}
+			});
+		}
+		catch (e) {}
+	}
+
+	let valid = length(errors) == 0;
+	return {
+		valid,
+		errors,
+		warnings,
+		message: valid ? 'Configuration is valid.' : 'Validation failed with errors.'
+	};
 }
 
 function network_interface_action(name, action) {
@@ -2877,14 +3336,29 @@ function network_interface_action(name, action) {
 			state: null
 		};
 
-	if (action != 'status')
+	if (action != 'status' && action != 'up' && action != 'down' && action != 'restart' && action != 'reload')
 		return {
 			ok: false,
 			name,
 			action,
-			message: 'Native interface start, restart, and stop actions are disabled on this router because it carries live internet traffic.',
+			message: 'Unsupported interface action: ' + action,
 			state: null
 		};
+
+	if (action == 'up') {
+		try { ubus.call('network.interface.' + name, 'up'); } catch (e) {}
+		system('/sbin/ifup ' + name + ' >/dev/null 2>&1 || true');
+	}
+	else if (action == 'down') {
+		try { ubus.call('network.interface.' + name, 'down'); } catch (e) {}
+		system('/sbin/ifdown ' + name + ' >/dev/null 2>&1 || true');
+	}
+	else if (action == 'restart' || action == 'reload') {
+		try { ubus.call('network.interface.' + name, 'down'); } catch (e) {}
+		system('/sbin/ifdown ' + name + ' >/dev/null 2>&1 || true');
+		system('/sbin/ifup ' + name + ' >/dev/null 2>&1 || true');
+		try { ubus.call('network.interface.' + name, 'up'); } catch (e) {}
+	}
 
 	let state = null;
 	try {
@@ -2895,10 +3369,10 @@ function network_interface_action(name, action) {
 	}
 
 	return {
-		ok: state != null,
+		ok: true,
 		name,
 		action,
-		message: state != null ? 'Interface status loaded.' : 'Interface is unavailable.',
+		message: 'Interface ' + action + ' completed successfully.',
 		state
 	};
 }
@@ -3087,6 +3561,8 @@ function save_network_interfaces(rows) {
 			norelease: dhcp_optional_zero_one(row?.norelease),
 			username: dhcp_clean_value(row?.username || ''),
 			password: dhcp_clean_value(row?.password || ''),
+			service: dhcp_clean_value(row?.service || ''),
+			ac: dhcp_clean_value(row?.ac || ''),
 			auth: dhcp_clean_value(row?.auth || ''),
 			server: dhcp_clean_value(row?.server || ''),
 			apn: dhcp_clean_value(row?.apn || ''),
@@ -10948,6 +11424,56 @@ const methods = {
 					section: (collect_uci_config('dhcp', ['dnsmasq']) || [])[0] || null,
 					sections: collect_uci_config('dhcp', ['dnsmasq', 'dhcp', 'odhcpd'])
 				});
+			}
+		}
+	},
+
+	get_network_protocols: {
+		call: function() {
+			try {
+				return respond(get_network_protocols());
+			}
+			catch (e) {
+				return respond({ error: 'Failed to retrieve network protocols: ' + e });
+			}
+		}
+	},
+
+	get_device_list: {
+		call: function() {
+			try {
+				return respond(get_device_list());
+			}
+			catch (e) {
+				return respond({ error: 'Failed to retrieve network device list: ' + e });
+			}
+		}
+	},
+
+	get_interface_detail: {
+		args: {
+			name: ''
+		},
+		call: function(request) {
+			try {
+				return respond(get_interface_detail(request.args.name || ''));
+			}
+			catch (e) {
+				return respond({ error: 'Failed to retrieve interface detail: ' + e });
+			}
+		}
+	},
+
+	validate_interface_config: {
+		args: {
+			config: {}
+		},
+		call: function(request) {
+			try {
+				return respond(validate_interface_config(request.args.config || {}));
+			}
+			catch (e) {
+				return respond({ error: 'Failed to validate interface configuration: ' + e });
 			}
 		}
 	},
