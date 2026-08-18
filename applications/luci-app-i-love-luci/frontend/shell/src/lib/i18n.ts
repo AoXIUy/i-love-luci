@@ -192,17 +192,8 @@ const dict: Record<string, string> = {
 	"hidden": "隐藏此路由",
 
 	// Additional Dashboard terms
-	"Connections": "连接数",
-	"Active Connections": "当前连接数",
 	"Collecting connection data...": "正在采集连接数数据...",
-	"max": "上限",
-	"leases": "个租约",
-	"sensors": "个传感器",
 	"devices": "个设备",
-	"Read": "读取",
-	"Write": "写入",
-	"Source": "数据源",
-	"Polls every": "刷新间隔",
 	"Collecting thermal data...": "正在采集温度数据...",
 	"Collecting disk I/O data...": "正在采集磁盘 I/O 数据...",
 
