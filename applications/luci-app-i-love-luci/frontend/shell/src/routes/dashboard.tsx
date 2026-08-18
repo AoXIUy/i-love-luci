@@ -11,7 +11,16 @@ import {
 	Tooltip,
 } from "chart.js";
 import type { ChartData, ChartOptions } from "chart.js";
-import { Activity, ChevronRight, Cpu, HardDrive, MemoryStick, Network, Thermometer, Wifi } from "lucide-react";
+import {
+	Activity,
+	ChevronRight,
+	Cpu,
+	HardDrive,
+	MemoryStick,
+	Network,
+	Thermometer,
+	Wifi,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bar, Doughnut, Line } from "react-chartjs-2";
@@ -20,12 +29,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+	getConntrackSummary,
 	getDashboardStatus,
+	getProcessStats,
+	getThermalHistory,
+	type ConntrackSummary,
 	type DashboardStatus,
 	type DeviceStatus,
 	type DhcpLease,
 	type DiskStatEntry,
 	type NetworkInterfaceStatus,
+	type ProcessStats,
+	type ThermalHistoryResult,
 	type ThermalZone,
 	type WirelessAssociation,
 } from "@/lib/rpc";
@@ -212,7 +227,6 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 	const previousStatus = useRef<DashboardStatus | null>(null);
 	const previousTime = useRef<number | null>(null);
 	const previousDiskStats = useRef<DiskStatEntry[] | null>(null);
-	const [leasesExpanded, setLeasesExpanded] = useState(true);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -467,7 +481,7 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 							</div>
 						</CardContent>
 					</Card>
-					<ConnectionsCard samples={samples} status={status} />
+					<ConnectionsPanel />
 				</div>
 
 				<div className="grid gap-5">
@@ -541,47 +555,39 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 				</div>
 			</div>
 
+			{/* 进程 CPU / 内存实时趋势面板 (10s 刷新) */}
 			<div className="grid gap-5">
-				<Card>
-					<CardHeader
-						className="flex flex-row items-center justify-between gap-3 cursor-pointer select-none"
-						onClick={() => setLeasesExpanded((prev) => !prev)}
-					>
-						<div className="flex items-center gap-2">
-							<CardTitle>{t("Active DHCP Leases")}</CardTitle>
-							<Badge>{status.dhcpLeases?.length ?? 0} {t("leases")}</Badge>
-						</div>
-						<Button
-							className="h-8 w-8"
-							size="icon"
-							variant="ghost"
-							type="button"
-							aria-expanded={leasesExpanded}
-							aria-label={leasesExpanded ? "Collapse leases" : "Expand leases"}
-						>
-							<ChevronRight className={cn("size-4 transition-transform duration-300", leasesExpanded && "rotate-90")} />
-						</Button>
-					</CardHeader>
-					<div
-						className={cn(
-							"grid transition-[grid-template-rows,opacity] duration-300 ease-in-out",
-							leasesExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-						)}
-					>
-						<div className="overflow-hidden">
-							<CardContent className="p-0 border-t">
-								<LeaseTable leases={status.dhcpLeases ?? []} />
-							</CardContent>
-						</div>
-					</div>
-				</Card>
+				<ProcessTrendPanel />
+			</div>
+
+			{/* 温度传感器历史曲线面板 (30s 刷新) */}
+			<div className="grid gap-5">
+				<ThermalHistoryPanel />
+			</div>
+
+			{/* 活动 DHCP 租约 (可折叠持久化) */}
+			<div className="grid gap-5">
+				<CollapsibleCard
+					id="dhcp-leases"
+					title={t("Active DHCP Leases")}
+					badge={<Badge>{status.dhcpLeases?.length ?? 0} {t("leases")}</Badge>}
+				>
+					<CardContent className="p-0">
+						<LeaseTable leases={status.dhcpLeases ?? []} />
+					</CardContent>
+				</CollapsibleCard>
 			</div>
 
 			<div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(22rem,1fr)]">
-				<Card>
-					<CardHeader>
-						<CardTitle>{t("Interfaces")}</CardTitle>
-					</CardHeader>
+				<CollapsibleCard
+					id="interfaces"
+					title={t("Interfaces")}
+					badge={
+						<Badge variant="outline" className="text-xs">
+							{activeDevices.length} {t("Connected")}
+						</Badge>
+					}
+				>
 					<CardContent className="p-0">
 						<div className="overflow-x-auto">
 							<table className="w-full min-w-[42rem] text-left text-sm">
@@ -636,7 +642,7 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 							</table>
 						</div>
 					</CardContent>
-				</Card>
+				</CollapsibleCard>
 
 				<Card>
 					<CardHeader>
@@ -652,11 +658,6 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 					</CardContent>
 				</Card>
 			</div>
-
-			{/* 温度传感器折线图（仅当路由器有温度传感器时显示） */}
-			{(status.thermalZones ?? []).length > 0 && (
-				<ThermalCard samples={samples} zones={status.thermalZones ?? []} />
-			)}
 
 			{/* 磁盘 I/O 速率折线图 */}
 			<DiskIOCard samples={samples} />
@@ -892,80 +893,619 @@ function Sparkline({ data, color = "#0f766e" }: { data: number[]; color?: string
 	);
 }
 
-// ─── 温度传感器折线图卡片 ─────────────────────────────────────────────────────
+// ─── 面板折叠状态持久化与通用卡片 ─────────────────────────────────────────────
 
-const thermalLineOptions: ChartOptions<"line"> = {
-	responsive: true,
-	maintainAspectRatio: false,
-	interaction: { intersect: false, mode: "index" },
-	plugins: {
-		legend: {
-			position: "bottom",
-			labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true },
-		},
-		tooltip: {
-			callbacks: {
-				label: (item) => `${item.dataset.label}: ${Number(item.raw).toFixed(1)}°C`,
-			},
-		},
-	},
-	scales: {
-		x: { grid: { display: false } },
-		y: {
-			beginAtZero: false,
-			ticks: { callback: (v) => `${Number(v).toFixed(0)}°C` },
-		},
-	},
-};
+function usePanelCollapseState(panelId: string, defaultExpanded = true) {
+	const storageKey = `i-love-luci.dashboard.panel.${panelId}.expanded`;
+	const [expanded, setExpanded] = useState<boolean>(() => {
+		if (typeof window === "undefined") return defaultExpanded;
+		const saved = window.localStorage.getItem(storageKey);
+		return saved !== null ? saved === "true" : defaultExpanded;
+	});
 
-function ThermalCard({
-	samples,
-	zones,
+	const toggle = () => {
+		setExpanded((prev) => {
+			const next = !prev;
+			if (typeof window !== "undefined") {
+				window.localStorage.setItem(storageKey, String(next));
+			}
+			return next;
+		});
+	};
+
+	return [expanded, toggle] as const;
+}
+
+function CollapsibleCard({
+	id,
+	title,
+	badge,
+	extraHeader,
+	defaultExpanded = true,
+	children,
+	className,
+	contentClassName,
 }: {
-	samples: BandwidthSample[];
-	zones: ThermalZone[];
+	id: string;
+	title: string;
+	badge?: React.ReactNode;
+	extraHeader?: React.ReactNode;
+	defaultExpanded?: boolean;
+	children: React.ReactNode;
+	className?: string;
+	contentClassName?: string;
 }) {
-	const THERMAL_COLORS = ["#f97316", "#ef4444", "#eab308", "#22c55e", "#3b82f6"];
-
-	const thermalData = useMemo<ChartData<"line">>(
-		() => ({
-			labels: samples.map((s) => s.label),
-			datasets: zones.slice(0, 5).map((zone, i) => ({
-				label: zone.type,
-				// 每个采样点的最高温度来自 maxTempC（仅展示总体趋势）
-				data: samples.map((s) => s.maxTempC),
-				borderColor: THERMAL_COLORS[i % THERMAL_COLORS.length],
-				backgroundColor: `${THERMAL_COLORS[i % THERMAL_COLORS.length]}18`,
-				fill: false,
-				tension: 0.35,
-				pointRadius: 0,
-				pointHoverRadius: 3,
-			})),
-		}),
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[samples, zones],
-	);
-
-	const latestTemp = samples[samples.length - 1]?.maxTempC ?? 0;
+	const [expanded, toggle] = usePanelCollapseState(id, defaultExpanded);
 
 	return (
-		<Card>
-			<CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-				<CardTitle>{t("Temperature")}</CardTitle>
-				<span className="text-sm text-muted-foreground">
-					{t("Peak")}: {latestTemp.toFixed(1)}°C · {zones.length} {t("sensors")}
-				</span>
+		<Card className={cn("transition-all duration-200", className)}>
+			<CardHeader
+				className="flex flex-row items-center justify-between gap-3 cursor-pointer select-none py-3.5 px-4 sm:px-6"
+				onClick={toggle}
+			>
+				<div className="flex flex-wrap items-center gap-2 min-w-0">
+					<CardTitle>{title}</CardTitle>
+					{badge}
+				</div>
+				<div className="flex items-center gap-2 shrink-0">
+					{extraHeader && <div onClick={(e) => e.stopPropagation()}>{extraHeader}</div>}
+					<Button
+						className="h-8 w-8"
+						size="icon"
+						variant="ghost"
+						type="button"
+						aria-expanded={expanded}
+						aria-label={expanded ? t("Collapse panel") : t("Expand panel")}
+					>
+						<ChevronRight className={cn("size-4 transition-transform duration-300", expanded && "rotate-90")} />
+					</Button>
+				</div>
 			</CardHeader>
-			<CardContent>
-				<div className="h-48">
-					{samples.length < 2 ? (
-						<EmptyChartLabel label={t("Collecting thermal data...")} />
+			<div
+				className={cn(
+					"grid transition-[grid-template-rows,opacity] duration-300 ease-in-out",
+					expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+				)}
+			>
+				<div className="overflow-hidden">
+					<div className={cn("border-t", contentClassName)}>
+						{children}
+					</div>
+				</div>
+			</div>
+		</Card>
+	);
+}
+
+// ─── 1. 网络连接追踪面板 (ConnectionsPanel - 30s 刷新) ─────────────────────────
+
+function ConnectionsPanel() {
+	const [summary, setSummary] = useState<ConntrackSummary | null>(null);
+	const [loading, setLoading] = useState(true);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		async function fetchSummary() {
+			try {
+				const data = await getConntrackSummary();
+				if (!cancelled) {
+					setSummary(data);
+					setLoading(false);
+				}
+			}
+			catch {
+				if (!cancelled) setLoading(false);
+			}
+		}
+
+		void fetchSummary();
+		const timer = window.setInterval(() => void fetchSummary(), 30000);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(timer);
+		};
+	}, []);
+
+	const tcp = summary?.tcp ?? 0;
+	const udp = summary?.udp ?? 0;
+	const icmp = summary?.icmp ?? 0;
+	const other = summary?.other ?? 0;
+	const total = summary?.total ?? (tcp + udp + icmp + other);
+	const max = summary?.max ?? 0;
+	const percent = max > 0 ? (total / max) * 100 : 0;
+
+	const doughnutData = useMemo<ChartData<"doughnut">>(() => {
+		return {
+			labels: [t("TCP"), t("UDP"), t("ICMP"), t("Other")],
+			datasets: [
+				{
+					data: [tcp, udp, icmp, other],
+					backgroundColor: ["#0284c7", "#10b981", "#f59e0b", "#8b5cf6"],
+					borderWidth: 0,
+				},
+			],
+		};
+	}, [icmp, other, tcp, udp]);
+
+	const doughnutOptions: ChartOptions<"doughnut"> = {
+		responsive: true,
+		maintainAspectRatio: false,
+		cutout: "72%",
+		plugins: {
+			legend: { display: false },
+			tooltip: {
+				callbacks: {
+					label: (item) => {
+						const val = Number(item.raw) || 0;
+						const pct = total > 0 ? ((val / total) * 100).toFixed(1) : "0.0";
+						return `${item.label}: ${val} (${pct}%)`;
+					},
+				},
+			},
+		},
+	};
+
+	return (
+		<CollapsibleCard
+			id="connections-summary"
+			title={t("Connection Tracking")}
+			badge={
+				<Badge variant="outline" className="text-xs">
+					{total} {t("Connections")}
+				</Badge>
+			}
+			extraHeader={
+				<span className="text-xs text-muted-foreground hidden sm:inline">
+					{t("Refreshes every 30s")}
+				</span>
+			}
+		>
+			<CardContent className="p-4 sm:p-6">
+				{loading ? (
+					<div className="py-8">
+						<EmptyChartLabel label={t("Loading connection stats...")} />
+					</div>
+				) : (
+					<div className="grid gap-6 md:grid-cols-[160px_1fr] items-center">
+						<div className="relative mx-auto h-36 w-36 shrink-0">
+							<Doughnut data={doughnutData} options={doughnutOptions} />
+							<div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+								<div>
+									<div className="text-xl font-bold">{total}</div>
+									<div className="text-[11px] text-muted-foreground">{t("Active")}</div>
+								</div>
+							</div>
+						</div>
+
+						<div className="grid gap-4 min-w-0">
+							{/* 容量进度条 */}
+							{max > 0 && (
+								<div className="grid gap-1.5">
+									<div className="flex justify-between text-xs text-muted-foreground">
+										<span>{t("Usage")} ({percent.toFixed(1)}%)</span>
+										<span>{total} / {max} {t("max")}</span>
+									</div>
+									<div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+										<div
+											className="h-full rounded-full bg-sky-600 transition-all duration-500"
+											style={{ width: `${Math.min(100, percent)}%` }}
+										/>
+									</div>
+								</div>
+							)}
+
+							{/* 各协议卡片 */}
+							<div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+								<div className="rounded-lg border bg-card p-2.5 shadow-xs">
+									<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+										<span className="size-2 rounded-full bg-[#0284c7]" />
+										<span>TCP</span>
+									</div>
+									<div className="mt-1 text-base font-semibold">{tcp}</div>
+									<div className="text-[11px] text-muted-foreground">
+										{total > 0 ? ((tcp / total) * 100).toFixed(0) : 0}%
+									</div>
+								</div>
+								<div className="rounded-lg border bg-card p-2.5 shadow-xs">
+									<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+										<span className="size-2 rounded-full bg-[#10b981]" />
+										<span>UDP</span>
+									</div>
+									<div className="mt-1 text-base font-semibold">{udp}</div>
+									<div className="text-[11px] text-muted-foreground">
+										{total > 0 ? ((udp / total) * 100).toFixed(0) : 0}%
+									</div>
+								</div>
+								<div className="rounded-lg border bg-card p-2.5 shadow-xs">
+									<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+										<span className="size-2 rounded-full bg-[#f59e0b]" />
+										<span>ICMP</span>
+									</div>
+									<div className="mt-1 text-base font-semibold">{icmp}</div>
+									<div className="text-[11px] text-muted-foreground">
+										{total > 0 ? ((icmp / total) * 100).toFixed(0) : 0}%
+									</div>
+								</div>
+								<div className="rounded-lg border bg-card p-2.5 shadow-xs">
+									<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+										<span className="size-2 rounded-full bg-[#8b5cf6]" />
+										<span>{t("Other")}</span>
+									</div>
+									<div className="mt-1 text-base font-semibold">{other}</div>
+									<div className="text-[11px] text-muted-foreground">
+										{total > 0 ? ((other / total) * 100).toFixed(0) : 0}%
+									</div>
+								</div>
+							</div>
+
+							{/* TCP 状态细分 */}
+							{summary?.tcpDetails && (summary.tcpDetails.established > 0 || summary.tcpDetails.timeWait > 0) && (
+								<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground pt-1 border-t">
+									<span>{t("Established")}: <strong className="text-foreground">{summary.tcpDetails.established}</strong></span>
+									<span>{t("Time Wait")}: <strong className="text-foreground">{summary.tcpDetails.timeWait}</strong></span>
+									<span>{t("Close Wait")}: <strong className="text-foreground">{summary.tcpDetails.closeWait}</strong></span>
+									<span>{t("Syn Sent")}: <strong className="text-foreground">{summary.tcpDetails.synSent}</strong></span>
+								</div>
+							)}
+						</div>
+					</div>
+				)}
+			</CardContent>
+		</CollapsibleCard>
+	);
+}
+
+// ─── 2. 进程 CPU/内存实时趋势面板 (ProcessTrendPanel - 10s 刷新) ───────────────
+
+type ProcessHistoryPoint = {
+	time: string;
+	pids: Record<string, number>;
+};
+
+const PROCESS_COLORS = ["#0f766e", "#2563eb", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#64748b"];
+
+function ProcessTrendPanel() {
+	const [stats, setStats] = useState<ProcessStats | null>(null);
+	const [history, setHistory] = useState<ProcessHistoryPoint[]>([]);
+	const [activeTab, setActiveTab] = useState<"trend" | "cpu" | "mem">("trend");
+
+	useEffect(() => {
+		let cancelled = false;
+
+		async function fetchStats() {
+			try {
+				const data = await getProcessStats();
+				if (cancelled) return;
+
+				setStats(data);
+				const now = Date.now();
+				const timeLabel = formatTime(now);
+
+				const pointMap: Record<string, number> = {};
+				for (const proc of (data.topCpu ?? []).slice(0, 5)) {
+					const key = `${proc.name} (${proc.pid})`;
+					pointMap[key] = proc.cpu;
+				}
+
+				setHistory((prev) => [
+					...prev.slice(Math.max(0, prev.length - 17)),
+					{ time: timeLabel, pids: pointMap },
+				]);
+			}
+			catch {
+				// 忽略请求错误
+			}
+		}
+
+		void fetchStats();
+		const timer = window.setInterval(() => void fetchStats(), 10000);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(timer);
+		};
+	}, []);
+
+	const topKeys = useMemo(() => {
+		const keySet = new Set<string>();
+		for (let i = history.length - 1; i >= 0; i--) {
+			for (const k of Object.keys(history[i].pids)) {
+				keySet.add(k);
+				if (keySet.size >= 5) break;
+			}
+			if (keySet.size >= 5) break;
+		}
+		return Array.from(keySet);
+	}, [history]);
+
+	const lineData = useMemo<ChartData<"line">>(() => {
+		return {
+			labels: history.map((h) => h.time),
+			datasets: topKeys.map((key, i) => {
+				const color = PROCESS_COLORS[i % PROCESS_COLORS.length];
+				return {
+					label: key,
+					data: history.map((h) => h.pids[key] ?? 0),
+					borderColor: color,
+					backgroundColor: `${color}15`,
+					fill: false,
+					tension: 0.35,
+					pointRadius: history.length > 10 ? 0 : 2,
+					pointHoverRadius: 4,
+				};
+			}),
+		};
+	}, [history, topKeys]);
+
+	const lineOptions: ChartOptions<"line"> = {
+		responsive: true,
+		maintainAspectRatio: false,
+		interaction: { intersect: false, mode: "index" },
+		plugins: {
+			legend: {
+				position: "bottom",
+				labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true },
+			},
+			tooltip: {
+				callbacks: {
+					label: (item) => `${item.dataset.label}: ${Number(item.raw).toFixed(1)}% CPU`,
+				},
+			},
+		},
+		scales: {
+			x: { grid: { display: false } },
+			y: {
+				beginAtZero: true,
+				ticks: { callback: (v) => `${Number(v).toFixed(0)}%` },
+			},
+		},
+	};
+
+	return (
+		<CollapsibleCard
+			id="process-trend"
+			title={t("Process Monitor")}
+			badge={
+				<Badge variant="outline" className="text-xs">
+					{stats?.processes?.length ?? 0} {t("Top Processes")}
+				</Badge>
+			}
+			extraHeader={
+				<div className="flex items-center gap-2">
+					<div className="inline-flex rounded-md border bg-muted p-0.5 text-xs">
+						<button
+							type="button"
+							className={cn(
+								"px-2 py-0.5 rounded text-xs transition-colors cursor-pointer",
+								activeTab === "trend" ? "bg-background shadow-xs font-medium" : "text-muted-foreground hover:text-foreground"
+							)}
+							onClick={() => setActiveTab("trend")}
+						>
+							{t("Trend")}
+						</button>
+						<button
+							type="button"
+							className={cn(
+								"px-2 py-0.5 rounded text-xs transition-colors cursor-pointer",
+								activeTab === "cpu" ? "bg-background shadow-xs font-medium" : "text-muted-foreground hover:text-foreground"
+							)}
+							onClick={() => setActiveTab("cpu")}
+						>
+							{t("Top CPU")}
+						</button>
+						<button
+							type="button"
+							className={cn(
+								"px-2 py-0.5 rounded text-xs transition-colors cursor-pointer",
+								activeTab === "mem" ? "bg-background shadow-xs font-medium" : "text-muted-foreground hover:text-foreground"
+							)}
+							onClick={() => setActiveTab("mem")}
+						>
+							{t("Top Memory")}
+						</button>
+					</div>
+					<span className="text-xs text-muted-foreground hidden sm:inline">
+						{t("Refreshes every 10s")}
+					</span>
+				</div>
+			}
+		>
+			<CardContent className="p-4 sm:p-6">
+				{activeTab === "trend" ? (
+					<div className="h-56">
+						{history.length < 2 ? (
+							<EmptyChartLabel label={t("Collecting process data...")} />
+						) : (
+							<Line data={lineData} options={lineOptions} />
+						)}
+					</div>
+				) : (
+					<div className="overflow-x-auto">
+						<table className="w-full min-w-[36rem] text-left text-sm">
+							<thead className="border-b text-xs uppercase text-muted-foreground">
+								<tr>
+									<th className="px-3 py-2 font-medium">PID</th>
+									<th className="px-3 py-2 font-medium">{t("User")}</th>
+									<th className="px-3 py-2 font-medium">{t("Command")}</th>
+									<th className="px-3 py-2 text-right font-medium">{t("CPU %")}</th>
+									<th className="px-3 py-2 text-right font-medium">{t("Memory %")}</th>
+								</tr>
+							</thead>
+							<tbody>
+								{((activeTab === "cpu" ? stats?.topCpu : stats?.topMem) ?? []).map((p) => (
+									<tr key={`${p.pid}-${p.name}`} className="border-b last:border-0 hover:bg-muted/40">
+										<td className="px-3 py-2 font-mono text-xs text-muted-foreground">{p.pid}</td>
+										<td className="px-3 py-2 text-xs">{p.user}</td>
+										<td className="px-3 py-2 font-medium truncate max-w-[18rem]" title={p.command}>
+											{p.name}
+										</td>
+										<td className="px-3 py-2 text-right font-mono text-xs font-semibold">
+											{p.cpu.toFixed(1)}%
+										</td>
+										<td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+											{p.mem.toFixed(1)}%
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				)}
+			</CardContent>
+		</CollapsibleCard>
+	);
+}
+
+// ─── 3. 温度历史时序曲线面板 (ThermalHistoryPanel - 30s 刷新) ───────────────────
+
+function ThermalHistoryPanel() {
+	const [thermalData, setThermalData] = useState<ThermalHistoryResult | null>(null);
+	const [loading, setLoading] = useState(true);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		async function fetchThermal() {
+			try {
+				const result = await getThermalHistory();
+				if (!cancelled) {
+					setThermalData(result);
+					setLoading(false);
+				}
+			}
+			catch {
+				if (!cancelled) setLoading(false);
+			}
+		}
+
+		void fetchThermal();
+		const timer = window.setInterval(() => void fetchThermal(), 30000);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(timer);
+		};
+	}, []);
+
+	const THERMAL_COLORS = ["#f97316", "#ef4444", "#eab308", "#22c55e", "#3b82f6", "#a855f7"];
+
+	const sensors = thermalData?.sensors ?? [];
+	const history = thermalData?.history ?? [];
+
+	const chartData = useMemo<ChartData<"line">>(() => {
+		const labels = history.map((h) => formatTime(h.timestamp * 1000));
+		const datasets = sensors.map((sensorName, i) => {
+			const color = THERMAL_COLORS[i % THERMAL_COLORS.length];
+			return {
+				label: sensorName,
+				data: history.map((h) => h.sensors?.[sensorName] ?? null),
+				borderColor: color,
+				backgroundColor: `${color}18`,
+				fill: false,
+				tension: 0.35,
+				pointRadius: history.length > 20 ? 0 : 2,
+				pointHoverRadius: 4,
+				spanGaps: true,
+			};
+		});
+
+		return { labels, datasets };
+	}, [history, sensors]);
+
+	const chartOptions: ChartOptions<"line"> = {
+		responsive: true,
+		maintainAspectRatio: false,
+		interaction: { intersect: false, mode: "index" },
+		plugins: {
+			legend: {
+				position: "bottom",
+				labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true },
+			},
+			tooltip: {
+				callbacks: {
+					label: (item) => `${item.dataset.label}: ${Number(item.raw).toFixed(1)}°C`,
+				},
+			},
+		},
+		scales: {
+			x: { grid: { display: false } },
+			y: {
+				beginAtZero: false,
+				ticks: { callback: (v) => `${Number(v).toFixed(0)}°C` },
+			},
+		},
+	};
+
+	const sensorStats = useMemo(() => {
+		return sensors.map((s) => {
+			const values = history
+				.map((h) => h.sensors?.[s])
+				.filter((v): v is number => typeof v === "number" && !isNaN(v));
+			const current = values.length
+				? values[values.length - 1]
+				: (thermalData?.current?.find((z) => z.type === s)?.tempC ?? 0);
+			const max = values.length ? Math.max(...values) : current;
+			const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : current;
+			return { name: s, current, max, avg };
+		});
+	}, [history, sensors, thermalData?.current]);
+
+	if (!loading && sensors.length === 0 && (thermalData?.current ?? []).length === 0) {
+		return null;
+	}
+
+	return (
+		<CollapsibleCard
+			id="thermal-history"
+			title={t("Thermal History (Last 30 min)")}
+			badge={
+				<Badge variant="outline" className="text-xs">
+					{sensors.length} {t("Sensors")}
+				</Badge>
+			}
+			extraHeader={
+				<span className="text-xs text-muted-foreground hidden sm:inline">
+					{t("Refreshes every 30s")}
+				</span>
+			}
+		>
+			<CardContent className="p-4 sm:p-6 grid gap-6">
+				{sensorStats.length > 0 && (
+					<div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+						{sensorStats.map((st, i) => (
+							<div key={st.name} className="rounded-lg border bg-card p-3 shadow-xs">
+								<div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground truncate" title={st.name}>
+									<span
+										className="size-2.5 shrink-0 rounded-full"
+										style={{ backgroundColor: THERMAL_COLORS[i % THERMAL_COLORS.length] }}
+									/>
+									<span className="truncate">{st.name}</span>
+								</div>
+								<div className="mt-1.5 flex items-baseline justify-between">
+									<span className="text-xl font-bold">{st.current.toFixed(1)}°C</span>
+									<span className="text-xs text-muted-foreground">
+										{t("Max")}: {st.max.toFixed(1)}°C
+									</span>
+								</div>
+								<div className="mt-1 text-[11px] text-muted-foreground">
+									{t("Average")}: {st.avg.toFixed(1)}°C
+								</div>
+							</div>
+						))}
+					</div>
+				)}
+
+				<div className="h-56">
+					{history.length < 2 ? (
+						<EmptyChartLabel label={t("Collecting thermal history...")} />
 					) : (
-						<Line data={thermalData} options={thermalLineOptions} />
+						<Line data={chartData} options={chartOptions} />
 					)}
 				</div>
 			</CardContent>
-		</Card>
+		</CollapsibleCard>
 	);
 }
 
@@ -1026,7 +1566,6 @@ function DiskIOCard({ samples }: { samples: BandwidthSample[] }) {
 		[samples],
 	);
 
-	// 如果始终没有磁盘 I/O 数据，不渲染卡片
 	const hasData = samples.some((s) => s.diskReadMBps > 0 || s.diskWriteMBps > 0);
 
 	if (!hasData && samples.length > 3) {
@@ -1034,11 +1573,11 @@ function DiskIOCard({ samples }: { samples: BandwidthSample[] }) {
 	}
 
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle>{t("Disk I/O")}</CardTitle>
-			</CardHeader>
-			<CardContent>
+		<CollapsibleCard
+			id="disk-io"
+			title={t("Disk I/O")}
+		>
+			<CardContent className="p-4 sm:p-6">
 				<div className="h-48">
 					{samples.length < 2 ? (
 						<EmptyChartLabel label={t("Collecting disk I/O data...")} />
@@ -1047,82 +1586,7 @@ function DiskIOCard({ samples }: { samples: BandwidthSample[] }) {
 					)}
 				</div>
 			</CardContent>
-		</Card>
-	);
-}
-
-// ─── 连接数速率折线图卡片 ──────────────────────────────────────────────────
-
-const connectionsLineOptions: ChartOptions<"line"> = {
-	responsive: true,
-	maintainAspectRatio: false,
-	interaction: { intersect: false, mode: "index" },
-	plugins: {
-		legend: {
-			position: "bottom",
-			labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true },
-		},
-		tooltip: {
-			callbacks: {
-				label: (item) =>
-					`${t(item.dataset.label ?? "")}: ${Number(item.raw).toFixed(0)}`,
-			},
-		},
-	},
-	scales: {
-		x: { grid: { display: false } },
-		y: {
-			beginAtZero: true,
-			ticks: { callback: (v) => `${Number(v).toFixed(0)}` },
-		},
-	},
-};
-
-function ConnectionsCard({ samples, status }: { samples: BandwidthSample[]; status: DashboardStatus }) {
-	const currentCount = status.connections?.count ?? 0;
-	const currentMax = status.connections?.max ?? 0;
-
-	const connectionsData = useMemo<ChartData<"line">>(
-		() => ({
-			labels: samples.map((s) => s.label),
-			datasets: [
-				{
-					label: t("Active Connections"),
-					data: samples.map((s) => s.activeConnections),
-					borderColor: "#0284c7", // sky-600
-					backgroundColor: "rgb(2 132 199 / 0.10)",
-					fill: true,
-					tension: 0.35,
-					pointRadius: 0,
-					pointHoverRadius: 3,
-				}
-			],
-		}),
-		[samples],
-	);
-
-	if (currentMax === 0) {
-		return null;
-	}
-
-	return (
-		<Card>
-			<CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-				<CardTitle>{t("Connections")}</CardTitle>
-				<span className="text-sm text-muted-foreground">
-					{currentCount} / {currentMax} {t("max")}
-				</span>
-			</CardHeader>
-			<CardContent>
-				<div className="h-48">
-					{samples.length < 2 ? (
-						<EmptyChartLabel label={t("Collecting connection data...")} />
-					) : (
-						<Line data={connectionsData} options={connectionsLineOptions} />
-					)}
-				</div>
-			</CardContent>
-		</Card>
+		</CollapsibleCard>
 	);
 }
 

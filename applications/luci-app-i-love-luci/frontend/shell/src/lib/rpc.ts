@@ -234,6 +234,51 @@ export type DashboardStatus = {
 	};
 };
 
+export type ConntrackSummary = {
+	total: number;
+	max: number;
+	tcp: number;
+	udp: number;
+	icmp: number;
+	other: number;
+	tcpDetails?: {
+		established: number;
+		timeWait: number;
+		closeWait: number;
+		synSent: number;
+		other: number;
+	};
+};
+
+export type ProcessStatItem = {
+	pid: number;
+	user: string;
+	cpu: number;
+	mem: number;
+	command: string;
+	name: string;
+};
+
+export type ProcessStats = {
+	collectedAt: number;
+	processes: ProcessStatItem[];
+	topCpu: ProcessStatItem[];
+	topMem: ProcessStatItem[];
+};
+
+export type ThermalHistoryPoint = {
+	timestamp: number;
+	sensors: Record<string, number>;
+	zones?: ThermalZone[];
+};
+
+export type ThermalHistoryResult = {
+	collectedAt: number;
+	current: ThermalZone[];
+	sensors: string[];
+	history: ThermalHistoryPoint[];
+};
+
 
 export type ConfigValue = string | number | boolean | Array<string | number | boolean>;
 
@@ -1579,6 +1624,36 @@ const fallbackDashboard: DashboardStatus = {
 	wirelessAssociations: [],
 };
 
+const fallbackConntrackSummary: ConntrackSummary = {
+	total: 0,
+	max: 0,
+	tcp: 0,
+	udp: 0,
+	icmp: 0,
+	other: 0,
+	tcpDetails: {
+		established: 0,
+		timeWait: 0,
+		closeWait: 0,
+		synSent: 0,
+		other: 0,
+	},
+};
+
+const fallbackProcessStats: ProcessStats = {
+	collectedAt: 0,
+	processes: [],
+	topCpu: [],
+	topMem: [],
+};
+
+const fallbackThermalHistory: ThermalHistoryResult = {
+	collectedAt: 0,
+	current: [],
+	sensors: [],
+	history: [],
+};
+
 async function callBridge<T>(method: string, args: Record<string, unknown> = {}): Promise<T> {
 	const config = getShellConfig();
 
@@ -1846,6 +1921,33 @@ export async function getSystemEvents(limit = 50): Promise<SystemEvent[]> {
 	}
 	catch {
 		return [];
+	}
+}
+
+export async function getConntrackSummary(): Promise<ConntrackSummary> {
+	try {
+		return await callBridge<ConntrackSummary>("get_conntrack_summary");
+	}
+	catch {
+		return fallbackConntrackSummary;
+	}
+}
+
+export async function getProcessStats(): Promise<ProcessStats> {
+	try {
+		return await callBridge<ProcessStats>("get_process_stats");
+	}
+	catch {
+		return fallbackProcessStats;
+	}
+}
+
+export async function getThermalHistory(): Promise<ThermalHistoryResult> {
+	try {
+		return await callBridge<ThermalHistoryResult>("get_thermal_history");
+	}
+	catch {
+		return fallbackThermalHistory;
 	}
 }
 

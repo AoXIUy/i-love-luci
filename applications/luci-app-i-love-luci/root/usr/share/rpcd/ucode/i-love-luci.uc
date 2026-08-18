@@ -829,6 +829,260 @@ function read_connections() {
 	};
 }
 
+function read_conntrack_summary() {
+	let count = int(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_count') || '0'));
+	let max = int(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_max') || '0'));
+
+	if (!max) {
+		count = int(trim(readfile('/proc/sys/net/ipv4/netfilter/ip_conntrack_count') || '0'));
+		max = int(trim(readfile('/proc/sys/net/ipv4/netfilter/ip_conntrack_max') || '0'));
+	}
+
+	let summary = {
+		total: count,
+		max: max,
+		tcp: 0,
+		udp: 0,
+		icmp: 0,
+		other: 0,
+		tcpDetails: {
+			established: 0,
+			timeWait: 0,
+			closeWait: 0,
+			synSent: 0,
+			other: 0
+		}
+	};
+
+	try {
+		let content = readfile('/proc/net/nf_conntrack') || readfile('/proc/net/ip_conntrack') || '';
+		if (length(content)) {
+			let lines = split(content, '\n');
+			let counted = 0;
+
+			for (let line in lines) {
+				line = trim(line);
+				if (!length(line))
+					continue;
+
+				counted++;
+
+				// 匹配协议类型
+				if (match(line, /\s+tcp\s+/i) || match(line, /^\s*tcp\s+/i)) {
+					summary.tcp++;
+					if (match(line, /\bESTABLISHED\b/)) {
+						summary.tcpDetails.established++;
+					}
+					else if (match(line, /\bTIME_WAIT\b/)) {
+						summary.tcpDetails.timeWait++;
+					}
+					else if (match(line, /\bCLOSE_WAIT\b/)) {
+						summary.tcpDetails.closeWait++;
+					}
+					else if (match(line, /\bSYN_SENT\b/)) {
+						summary.tcpDetails.synSent++;
+					}
+					else {
+						summary.tcpDetails.other++;
+					}
+				}
+				else if (match(line, /\s+udp\s+/i) || match(line, /^\s*udp\s+/i)) {
+					summary.udp++;
+				}
+				else if (match(line, /\s+icmp(v6)?\s+/i) || match(line, /^\s*icmp(v6)?\s+/i)) {
+					summary.icmp++;
+				}
+				else {
+					summary.other++;
+				}
+			}
+
+			if (counted > 0 && !summary.total) {
+				summary.total = counted;
+			}
+		}
+	}
+	catch (e) {
+		// 忽略读取错误
+	}
+
+	return summary;
+}
+
+function read_process_stats() {
+	let processes = [];
+
+	try {
+		let raw = trim(shell_output('top -bn1 2>/dev/null'));
+
+		if (length(raw)) {
+			let lines = split(raw, '\n');
+			let headerFound = false;
+			let headers = [];
+
+			for (let line in lines) {
+				line = trim(line);
+				if (!length(line))
+					continue;
+
+				if (!headerFound) {
+					// 兼容 BusyBox 与 Procps top 输出头行
+					if (match(line, /^PID\s+/i)) {
+						headerFound = true;
+						headers = split(line, /\s+/);
+					}
+					continue;
+				}
+
+				let parts = split(line, /\s+/);
+				if (length(parts) < 4)
+					continue;
+
+				let pid = int(parts[0]);
+				if (!pid)
+					continue;
+
+				let cpuIdx = -1;
+				let vszIdx = -1;
+				let userIdx = 1;
+				let cmdIdx = -1;
+
+				for (let i = 0; i < length(headers); i++) {
+					let h = uc(headers[i]);
+					if (h == '%CPU' || h == 'CPU') cpuIdx = i;
+					else if (h == '%VSZ' || h == '%MEM' || h == 'MEM' || h == 'VSZ') vszIdx = i;
+					else if (h == 'USER') userIdx = i;
+					else if (h == 'COMMAND' || h == 'CMD') cmdIdx = i;
+				}
+
+				let user = parts[userIdx] || 'root';
+				let cpuStr = (cpuIdx >= 0 && cpuIdx < length(parts)) ? parts[cpuIdx] : '0';
+				let memStr = (vszIdx >= 0 && vszIdx < length(parts)) ? parts[vszIdx] : '0';
+
+				let cpu = double(replace(cpuStr, /%/g, '')) || 0.0;
+				let mem = double(replace(memStr, /%/g, '')) || 0.0;
+
+				let command = '';
+				if (cmdIdx >= 0 && cmdIdx < length(parts)) {
+					command = join(' ', slice(parts, cmdIdx));
+				}
+				else {
+					command = parts[length(parts) - 1];
+				}
+
+				let name = command;
+				if (match(name, /^\[(.*)\]$/)) {
+					name = match(name, /^\[(.*)\]$/)[1];
+				}
+				else {
+					let p = split(name, /\s+/)[0];
+					let slashParts = split(p, '/');
+					name = slashParts[length(slashParts) - 1];
+				}
+
+				push(processes, {
+					pid,
+					user,
+					cpu,
+					mem,
+					command,
+					name
+				});
+			}
+		}
+	}
+	catch (e) {
+		// 忽略读取错误
+	}
+
+	// 按 CPU 降序排序
+	sort(processes, function(a, b) {
+		return b.cpu == a.cpu ? (b.mem - a.mem) : (b.cpu - a.cpu);
+	});
+
+	let topCpu = slice(processes, 0, 10);
+
+	let memProcesses = slice(processes, 0);
+	sort(memProcesses, function(a, b) {
+		return b.mem == a.mem ? (b.cpu - a.cpu) : (b.mem - a.mem);
+	});
+	let topMem = slice(memProcesses, 0, 10);
+
+	return {
+		collectedAt: time(),
+		processes: topCpu,
+		topCpu,
+		topMem
+	};
+}
+
+const thermalHistoryPath = '/tmp/run/i-love-luci-thermal.json';
+
+function read_thermal_history() {
+	let currentZones = read_thermal_zones();
+	let now = time();
+
+	let history = read_jsonfile(thermalHistoryPath, []);
+	if (type(history) != 'array') {
+		history = [];
+	}
+
+	let lastSample = length(history) ? history[length(history) - 1] : null;
+	let shouldAppend = true;
+	if (lastSample && (now - (lastSample.timestamp || 0) < 5)) {
+		shouldAppend = false;
+	}
+
+	if (shouldAppend && length(currentZones)) {
+		let sensorMap = {};
+		for (let z in currentZones) {
+			sensorMap[z.type] = z.tempC;
+		}
+
+		push(history, {
+			timestamp: now,
+			sensors: sensorMap,
+			zones: currentZones
+		});
+
+		if (length(history) > 60) {
+			history = slice(history, length(history) - 60);
+		}
+
+		try {
+			system('mkdir -p /tmp/run 2>/dev/null || true');
+			writefile(thermalHistoryPath, sprintf('%J', history));
+		}
+		catch (e) {
+			// 忽略写入错误
+		}
+	}
+
+	let sensorNames = [];
+	let seenNames = {};
+	for (let item in history) {
+		for (let sName, _ in (item.sensors || {})) {
+			if (!seenNames[sName]) {
+				seenNames[sName] = true;
+				push(sensorNames, sName);
+			}
+		}
+	}
+	for (let z in currentZones) {
+		if (!seenNames[z.type]) {
+			seenNames[z.type] = true;
+			push(sensorNames, z.type);
+		}
+	}
+
+	return {
+		collectedAt: now,
+		current: currentZones,
+		sensors: sensorNames,
+		history: history
+	};
+}
+
 function read_disk_stats() {
 	let stats = [];
 
@@ -10418,6 +10672,42 @@ const methods = {
 				diskStats: read_disk_stats(),
 				connections: read_connections()
 			});
+		}
+	},
+
+	get_conntrack_summary: {
+		call: function() {
+			return respond(read_conntrack_summary());
+		}
+	},
+
+	conntrack_summary: {
+		call: function() {
+			return respond(read_conntrack_summary());
+		}
+	},
+
+	get_process_stats: {
+		call: function() {
+			return respond(read_process_stats());
+		}
+	},
+
+	process_stats: {
+		call: function() {
+			return respond(read_process_stats());
+		}
+	},
+
+	get_thermal_history: {
+		call: function() {
+			return respond(read_thermal_history());
+		}
+	},
+
+	thermal_history: {
+		call: function() {
+			return respond(read_thermal_history());
 		}
 	},
 

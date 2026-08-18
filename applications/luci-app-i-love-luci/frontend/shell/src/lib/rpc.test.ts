@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getDashboardStatus, probeAuthSession } from "@/lib/rpc";
+import {
+	getConntrackSummary,
+	getDashboardStatus,
+	getProcessStats,
+	getThermalHistory,
+	probeAuthSession,
+} from "@/lib/rpc";
 
 function stubBrowser(sessionId: string | null) {
 	vi.stubGlobal("document", {
@@ -119,3 +125,120 @@ describe("getDashboardStatus", () => {
 		});
 	});
 });
+
+describe("extended dashboard RPCs", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("fetches conntrack summary successfully", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: {
+								total: 150,
+								max: 16384,
+								tcp: 100,
+								udp: 45,
+								icmp: 3,
+								other: 2,
+								tcpDetails: { established: 90, timeWait: 5, closeWait: 3, synSent: 2, other: 0 },
+							},
+						},
+					],
+				}),
+			),
+		);
+
+		const summary = await getConntrackSummary();
+		expect(summary.total).toBe(150);
+		expect(summary.tcp).toBe(100);
+		expect(summary.udp).toBe(45);
+	});
+
+	it("falls back gracefully when conntrack call fails", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("RPC failed")));
+
+		const summary = await getConntrackSummary();
+		expect(summary).toMatchObject({
+			total: 0,
+			max: 0,
+			tcp: 0,
+			udp: 0,
+			icmp: 0,
+			other: 0,
+		});
+	});
+
+	it("fetches process stats and handles fallback", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: {
+								collectedAt: 123456789,
+								processes: [{ pid: 1, user: "root", cpu: 5.2, mem: 1.1, command: "/sbin/procd", name: "procd" }],
+								topCpu: [{ pid: 1, user: "root", cpu: 5.2, mem: 1.1, command: "/sbin/procd", name: "procd" }],
+								topMem: [{ pid: 1, user: "root", cpu: 5.2, mem: 1.1, command: "/sbin/procd", name: "procd" }],
+							},
+						},
+					],
+				}),
+			),
+		);
+
+		const stats = await getProcessStats();
+		expect(stats.processes).toHaveLength(1);
+		expect(stats.processes[0].name).toBe("procd");
+
+		// Fallback
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fail")));
+		const fallback = await getProcessStats();
+		expect(fallback.processes).toHaveLength(0);
+	});
+
+	it("fetches thermal history and handles fallback", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: {
+								collectedAt: 123456789,
+								current: [{ type: "cpu-thermal", tempC: 52.5 }],
+								sensors: ["cpu-thermal"],
+								history: [{ timestamp: 123456789, sensors: { "cpu-thermal": 52.5 } }],
+							},
+						},
+					],
+				}),
+			),
+		);
+
+		const result = await getThermalHistory();
+		expect(result.sensors).toEqual(["cpu-thermal"]);
+		expect(result.history).toHaveLength(1);
+
+		// Fallback
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fail")));
+		const fallback = await getThermalHistory();
+		expect(fallback.history).toHaveLength(0);
+	});
+});
+
