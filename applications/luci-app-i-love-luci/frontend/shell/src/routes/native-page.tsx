@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Download, ExternalLink, Play, Plus, Power, Search, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, ArrowDown, ArrowUp, Ban, CheckCircle2, ChevronDown, ChevronRight, Download, ExternalLink, FileSpreadsheet, FileText, Filter, Loader2, Play, Plus, Power, RefreshCw, Search, Shield, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ import {
 	getPackageI18nSuggestions,
 	getPackageJobStatus,
 	getServiceDetail,
+	killConntrackConnection,
 	runAttendedSysupgradePlan,
 	runCustomCommand,
 	runPackageAction,
@@ -40,6 +41,7 @@ import {
 	removeUhttpdCertificate,
 	saveUhttpdCertificateFile,
 	saveUhttpdConfigs,
+	toggleNftRule,
 	validateFirmwareImage,
 	validateRestoreBackup,
 	runServiceAction,
@@ -60,6 +62,7 @@ import {
 	type BanipConfigInput,
 	type CommandBlock,
 	type ConfigSection,
+	type ConntrackEntry,
 	type CustomCommand,
 	type CustomCommandResult,
 	type DropbearConfigInput,
@@ -69,6 +72,9 @@ import {
 	type LedConfigRow,
 	type NativePageData,
 	type NativeService,
+	type NftChainItem,
+	type NftRuleItem,
+	type NftTableItem,
 	type PackageActionResult,
 	type PackageActionOptions,
 	type PackageDetailResult,
@@ -139,6 +145,9 @@ type RouteEntry = {
 	source: string;
 	scope: string;
 	metric: string;
+	proto: string;
+	family: "ipv4" | "ipv6";
+	isDefault: boolean;
 };
 
 type RuleEntry = {
@@ -154,19 +163,31 @@ type NeighborEntry = {
 };
 
 type NftChain = {
+	table: string;
 	name: string;
 	hook: string;
 	policy: string;
+	priority: string;
 	rules: number;
 };
 
 type NftRule = {
+	table: string;
 	chain: string;
+	handle?: number;
 	action: string;
 	packets: string;
 	bytes: string;
 	comment: string;
 	expression: string;
+	raw: string;
+	disabled?: boolean;
+};
+
+type NftTable = {
+	family: string;
+	name: string;
+	chains: NftChain[];
 };
 
 type ProcessEntry = {
@@ -4418,45 +4439,381 @@ function PackageUpgradeTable({
 }
 
 function RoutingSummary({ data }: { data: NativePageData }) {
-	const ipv4Routes = parseRoutes(commandOutput(data.commands, "IPv4 routes"));
-	const ipv6Routes = parseRoutes(commandOutput(data.commands, "IPv6 routes"));
-	const ipv4Rules = parseRules(commandOutput(data.commands, "IPv4 rules"));
-	const ipv6Rules = parseRules(commandOutput(data.commands, "IPv6 rules"));
-	const ipv4Neighbors = parseNeighbors(commandOutput(data.commands, "IPv4 neighbours"));
-	const ipv6Neighbors = parseNeighbors(commandOutput(data.commands, "IPv6 neighbours"));
+	const ipv4Routes = useMemo(() => parseRoutes(commandOutput(data.commands, "IPv4 routes"), "ipv4"), [data.commands]);
+	const ipv6Routes = useMemo(() => parseRoutes(commandOutput(data.commands, "IPv6 routes"), "ipv6"), [data.commands]);
+	const ipv4Rules = useMemo(() => parseRules(commandOutput(data.commands, "IPv4 rules")), [data.commands]);
+	const ipv6Rules = useMemo(() => parseRules(commandOutput(data.commands, "IPv6 rules")), [data.commands]);
+	const ipv4Neighbors = useMemo(() => parseNeighbors(commandOutput(data.commands, "IPv4 neighbours")), [data.commands]);
+	const ipv6Neighbors = useMemo(() => parseNeighbors(commandOutput(data.commands, "IPv6 neighbours")), [data.commands]);
+
+	const allRoutes = useMemo(() => [...ipv4Routes, ...ipv6Routes], [ipv4Routes, ipv6Routes]);
+
+	const [filterTarget, setFilterTarget] = useState("");
+	const [filterDevice, setFilterDevice] = useState("all");
+	const [filterProto, setFilterProto] = useState("all");
+	const [filterTable, setFilterTable] = useState("all");
+
+	const devices = useMemo(() => {
+		const set = new Set<string>();
+		for (const r of allRoutes) {
+			if (r.device && r.device !== "none") set.add(r.device);
+		}
+		return Array.from(set).sort();
+	}, [allRoutes]);
+
+	const protos = useMemo(() => {
+		const set = new Set<string>();
+		for (const r of allRoutes) {
+			if (r.proto && r.proto !== "none") set.add(r.proto);
+		}
+		return Array.from(set).sort();
+	}, [allRoutes]);
+
+	const tables = useMemo(() => {
+		const set = new Set<string>();
+		for (const r of allRoutes) {
+			if (r.table && r.table !== "none") set.add(r.table);
+		}
+		return Array.from(set).sort();
+	}, [allRoutes]);
+
+	const filterFn = (r: RouteEntry) => {
+		if (filterTarget) {
+			const q = filterTarget.toLowerCase();
+			const matchTarget = r.target.toLowerCase().includes(q);
+			const matchVia = r.via.toLowerCase().includes(q);
+			const matchSource = r.source.toLowerCase().includes(q);
+			if (!matchTarget && !matchVia && !matchSource) {
+				return false;
+			}
+		}
+		if (filterDevice !== "all" && r.device !== filterDevice) {
+			return false;
+		}
+		if (filterProto !== "all" && r.proto !== filterProto) {
+			return false;
+		}
+		if (filterTable !== "all" && r.table !== filterTable) {
+			return false;
+		}
+		return true;
+	};
+
+	const filteredIpv4 = useMemo(() => ipv4Routes.filter(filterFn), [ipv4Routes, filterTarget, filterDevice, filterProto, filterTable]);
+	const filteredIpv6 = useMemo(() => ipv6Routes.filter(filterFn), [ipv6Routes, filterTarget, filterDevice, filterProto, filterTable]);
+	const filteredAll = useMemo(() => [...filteredIpv4, ...filteredIpv6], [filteredIpv4, filteredIpv6]);
+
+	const defaultRoutesCount = useMemo(() => allRoutes.filter((r) => r.isDefault).length, [allRoutes]);
+	const hasActiveFilters = filterTarget || filterDevice !== "all" || filterProto !== "all" || filterTable !== "all";
 
 	return (
 		<div className="grid gap-4">
-			<div className="grid gap-3 sm:grid-cols-3">
-				<MetricBlock label="Routes" value={ipv4Routes.length + ipv6Routes.length} />
-				<MetricBlock label="Policy rules" value={ipv4Rules.length + ipv6Rules.length} />
-				<MetricBlock label="Neighbours" value={ipv4Neighbors.length + ipv6Neighbors.length} />
+			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+				<MetricBlock label={t("Total routes")} value={allRoutes.length} />
+				<MetricBlock label={t("Default routes")} value={defaultRoutesCount} />
+				<MetricBlock label={t("Policy rules")} value={ipv4Rules.length + ipv6Rules.length} />
+				<MetricBlock label={t("Neighbours")} value={ipv4Neighbors.length + ipv6Neighbors.length} />
 			</div>
-			<RouteTable entries={ipv4Routes} title="IPv4 routes" />
-			<RouteTable entries={ipv6Routes} title="IPv6 routes" />
-			<RuleTable entries={ipv4Rules} title="IPv4 rules" />
-			<RuleTable entries={ipv6Rules} title="IPv6 rules" />
-			<NeighborTable entries={ipv4Neighbors} title="IPv4 neighbours" />
-			<NeighborTable entries={ipv6Neighbors} title="IPv6 neighbours" />
+
+			<Panel
+				title={
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<span className="flex items-center gap-2">
+							<Filter className="size-4 text-muted-foreground" />
+							{t("Filter routes")}
+						</span>
+						<div className="flex flex-wrap items-center gap-2">
+							<Button
+								onClick={() => exportRoutesToJson(filteredAll, `routes-${Date.now()}.json`)}
+								size="sm"
+								variant="outline"
+							>
+								<Download className="mr-1 size-3.5" />
+								{t("Export JSON")}
+							</Button>
+							<Button
+								onClick={() => exportRoutesToCsv(filteredAll, `routes-${Date.now()}.csv`)}
+								size="sm"
+								variant="outline"
+							>
+								<FileSpreadsheet className="mr-1 size-3.5" />
+								{t("Export CSV")}
+							</Button>
+							{hasActiveFilters ? (
+								<Button
+									onClick={() => {
+										setFilterTarget("");
+										setFilterDevice("all");
+										setFilterProto("all");
+										setFilterTable("all");
+									}}
+									size="sm"
+									variant="ghost"
+								>
+									<X className="mr-1 size-3.5" />
+									{t("Reset filters")}
+								</Button>
+							) : null}
+						</div>
+					</div>
+				}
+			>
+				<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Target")} / IP / CIDR
+						</label>
+						<Input
+							className="h-8 text-xs"
+							onChange={(e) => setFilterTarget(e.target.value)}
+							placeholder={t("Filter by destination / prefix / gateway")}
+							value={filterTarget}
+						/>
+					</div>
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Device")}
+						</label>
+						<select
+							className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-xs text-foreground outline-none focus-visible:border-ring"
+							onChange={(e) => setFilterDevice(e.target.value)}
+							value={filterDevice}
+						>
+							<option value="all">{t("All interfaces")}</option>
+							{devices.map((d) => (
+								<option key={d} value={d}>
+									{d}
+								</option>
+							))}
+						</select>
+					</div>
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Proto")}
+						</label>
+						<select
+							className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-xs text-foreground outline-none focus-visible:border-ring"
+							onChange={(e) => setFilterProto(e.target.value)}
+							value={filterProto}
+						>
+							<option value="all">{t("All protocols")}</option>
+							{protos.map((p) => (
+								<option key={p} value={p}>
+									{p}
+								</option>
+							))}
+						</select>
+					</div>
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Table")}
+						</label>
+						<select
+							className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-xs text-foreground outline-none focus-visible:border-ring"
+							onChange={(e) => setFilterTable(e.target.value)}
+							value={filterTable}
+						>
+							<option value="all">{t("All tables")}</option>
+							{tables.map((tbl) => (
+								<option key={tbl} value={tbl}>
+									{tbl}
+								</option>
+							))}
+						</select>
+					</div>
+				</div>
+			</Panel>
+
+			<RouteTable entries={filteredIpv4} title={t("IPv4 routes")} />
+			<RouteTable entries={filteredIpv6} title={t("IPv6 routes")} />
+			<RuleTable entries={ipv4Rules} title={t("IPv4 rules")} />
+			<RuleTable entries={ipv6Rules} title={t("IPv6 rules")} />
+			<NeighborTable entries={ipv4Neighbors} title={t("IPv4 neighbours")} />
+			<NeighborTable entries={ipv6Neighbors} title={t("IPv6 neighbours")} />
 		</div>
 	);
 }
 
 function NftablesSummary({ data }: { data: NativePageData }) {
 	const ruleset = commandOutput(data.commands, "nftables ruleset");
-	const chains = parseNftChains(ruleset);
-	const rules = parseNftRules(ruleset);
+	const parsedTables = useMemo(() => parseNftGrouped(ruleset), [ruleset]);
+	const chains = useMemo(() => parseNftChains(ruleset), [ruleset]);
+	const rules = useMemo(() => parseNftRules(ruleset), [ruleset]);
 	const policyCounts = countBy(chains.map((chain) => chain.policy).filter(Boolean));
+
+	const [disabledHandles, setDisabledHandles] = useState<Set<string>>(new Set());
+	const [disablingHandle, setDisablingHandle] = useState<string | null>(null);
+
+	const [searchQuery, setSearchQuery] = useState("");
+	const [filterTable, setFilterTable] = useState("all");
+	const [filterAction, setFilterAction] = useState("all");
+
+	const [timedOut, setTimedOut] = useState(false);
+
+	useEffect(() => {
+		if (ruleset.includes("timed out") || ruleset.includes("timeout")) {
+			setTimedOut(true);
+		}
+	}, [ruleset]);
+
+	const handleToggleRule = async (rule: NftRule) => {
+		if (!rule.handle) {
+			toast.error(t("Rule handle not available."));
+			return;
+		}
+		const key = `${rule.table}.${rule.chain}.${rule.handle}`;
+		setDisablingHandle(key);
+		const result = await toggleNftRule({
+			table: rule.table,
+			chain: rule.chain,
+			handle: rule.handle,
+			action: "disable",
+		});
+		setDisablingHandle(null);
+
+		if (result.ok) {
+			toast.success(t("Rule disabled in runtime."));
+			setDisabledHandles((prev) => new Set(prev).add(key));
+		} else {
+			toast.error(result.error || t("Rule deletion in runtime failed."));
+		}
+	};
+
+	const tableNames = useMemo(() => {
+		return parsedTables.map((t) => `${t.family} ${t.name}`);
+	}, [parsedTables]);
+
+	const filteredTables = useMemo(() => {
+		return parsedTables
+			.filter((tbl) => {
+				if (filterTable !== "all" && `${tbl.family} ${tbl.name}` !== filterTable) {
+					return false;
+				}
+				return true;
+			})
+			.map((tbl) => {
+				const filteredChains = tbl.chains
+					.map((ch) => {
+						const filteredRules = ch.rules.filter((r) => {
+							if (searchQuery) {
+								const q = searchQuery.toLowerCase();
+								const matchesChain = r.chain.toLowerCase().includes(q);
+								const matchesComment = r.comment.toLowerCase().includes(q);
+								const matchesExpr = r.expression.toLowerCase().includes(q);
+								if (!matchesChain && !matchesComment && !matchesExpr) {
+									return false;
+								}
+							}
+							if (filterAction !== "all" && r.action !== filterAction) {
+								return false;
+							}
+							return true;
+						});
+						return {
+							...ch,
+							rules: filteredRules,
+						};
+					})
+					.filter((ch) => ch.rules.length > 0 || !searchQuery);
+				return {
+					...tbl,
+					chains: filteredChains,
+				};
+			})
+			.filter((tbl) => tbl.chains.length > 0 || !searchQuery);
+	}, [parsedTables, filterTable, searchQuery, filterAction]);
 
 	return (
 		<div className="grid gap-4">
-			<div className="grid gap-3 sm:grid-cols-3">
-				<MetricBlock label="Chains" value={chains.length} />
-				<MetricBlock label="Rules" value={rules.length} />
-				<MetricBlock label="Drop policies" value={policyCounts.drop ?? 0} />
+			{timedOut ? (
+				<div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+					<div className="flex items-center gap-2">
+						<AlertTriangle className="size-5 shrink-0 text-amber-600 dark:text-amber-400" />
+						<span>{t("nftables ruleset load timed out (>3s). Showing degraded summary.")}</span>
+					</div>
+					<Button
+						onClick={() => window.location.reload()}
+						size="sm"
+						variant="outline"
+					>
+						<RefreshCw className="mr-1 size-3.5" />
+						{t("Retry")}
+					</Button>
+				</div>
+			) : null}
+
+			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+				<MetricBlock label={t("Tables")} value={parsedTables.length} />
+				<MetricBlock label={t("Chains")} value={chains.length} />
+				<MetricBlock label={t("Rules")} value={rules.length} />
+				<MetricBlock label={t("Drop policies")} value={policyCounts.drop ?? 0} />
 			</div>
-			<NftChainTable entries={chains} />
-			<NftRuleTable entries={rules} />
+
+			<Panel
+				title={
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<span className="flex items-center gap-2">
+							<Shield className="size-4 text-muted-foreground" />
+							{t("Filter nftables rules")}
+						</span>
+					</div>
+				}
+			>
+				<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Search")}
+						</label>
+						<Input
+							className="h-8 text-xs"
+							onChange={(e) => setSearchQuery(e.target.value)}
+							placeholder={t("Search chain, comment or expression...")}
+							value={searchQuery}
+						/>
+					</div>
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Table")}
+						</label>
+						<select
+							className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-xs text-foreground outline-none focus-visible:border-ring"
+							onChange={(e) => setFilterTable(e.target.value)}
+							value={filterTable}
+						>
+							<option value="all">{t("All tables")}</option>
+							{tableNames.map((tbl) => (
+								<option key={tbl} value={tbl}>
+									{tbl}
+								</option>
+							))}
+						</select>
+					</div>
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Action")}
+						</label>
+						<select
+							className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-xs text-foreground outline-none focus-visible:border-ring"
+							onChange={(e) => setFilterAction(e.target.value)}
+							value={filterAction}
+						>
+							<option value="all">{t("All actions")}</option>
+							<option value="accept">accept</option>
+							<option value="drop">drop</option>
+							<option value="reject">reject</option>
+							<option value="return">return</option>
+							<option value="masquerade">masquerade</option>
+						</select>
+					</div>
+				</div>
+			</Panel>
+
+			<NftGroupedView
+				disabledHandles={disabledHandles}
+				disablingHandle={disablingHandle}
+				onToggleRule={(rule) => void handleToggleRule(rule)}
+				tables={filteredTables}
+			/>
 		</div>
 	);
 }
@@ -4478,17 +4835,244 @@ function ProcessSummary({ data }: { data: NativePageData }) {
 }
 
 function ConnectionSummary({ data }: { data: NativePageData }) {
-	const sockets = parseSockets(commandOutput(data.commands, "Active sockets"));
-	const protocolCounts = countBy(sockets.map((socket) => socket.protocol).filter(Boolean));
+	const conntrackRaw = commandOutput(data.commands, "Connection tracking");
+	const conntrackEntries = useMemo(() => parseConntrack(conntrackRaw), [conntrackRaw]);
+	const sockets = useMemo(() => parseSockets(commandOutput(data.commands, "Active sockets")), [data.commands]);
+
+	const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+	const [killingId, setKillingId] = useState<string | null>(null);
+
+	const [filterSrc, setFilterSrc] = useState("");
+	const [filterDst, setFilterDst] = useState("");
+	const [filterProto, setFilterProto] = useState("all");
+	const [filterState, setFilterState] = useState("all");
+	const [searchQuery, setSearchQuery] = useState("");
+
+	const [viewMode, setViewMode] = useState<"conntrack" | "sockets">(conntrackEntries.length > 0 ? "conntrack" : "sockets");
+
+	const activeConntrack = useMemo(() => {
+		return conntrackEntries.filter((c) => !deletedIds.has(`${c.src}:${c.sport}->${c.dst}:${c.dport}`));
+	}, [conntrackEntries, deletedIds]);
+
+	const protocolCounts = useMemo(() => {
+		return countBy(activeConntrack.map((c) => c.protocol));
+	}, [activeConntrack]);
+
+	const conntrackSummary = data.conntrack;
+	const totalConns = conntrackSummary?.total || activeConntrack.length;
+	const maxConns = conntrackSummary?.max || 16384;
+	const usagePercent = maxConns > 0 ? Math.min(100, Math.round((totalConns / maxConns) * 100)) : 0;
+
+	const filteredConnections = useMemo(() => {
+		return activeConntrack.filter((c) => {
+			if (filterSrc && !c.src.toLowerCase().includes(filterSrc.toLowerCase()) && !c.sport.includes(filterSrc)) {
+				return false;
+			}
+			if (filterDst && !c.dst.toLowerCase().includes(filterDst.toLowerCase()) && !c.dport.includes(filterDst)) {
+				return false;
+			}
+			if (filterProto !== "all" && c.protocol.toLowerCase() !== filterProto.toLowerCase()) {
+				return false;
+			}
+			if (filterState !== "all" && c.state.toUpperCase() !== filterState.toUpperCase()) {
+				return false;
+			}
+			if (searchQuery) {
+				const q = searchQuery.toLowerCase();
+				if (!c.src.includes(q) && !c.dst.includes(q) && !c.sport.includes(q) && !c.dport.includes(q) && !c.protocol.includes(q) && !c.state.toLowerCase().includes(q)) {
+					return false;
+				}
+			}
+			return true;
+		});
+	}, [activeConntrack, filterSrc, filterDst, filterProto, filterState, searchQuery]);
+
+	const handleKillConnection = async (conn: ConntrackEntry) => {
+		const id = `${conn.src}:${conn.sport}->${conn.dst}:${conn.dport}`;
+		setKillingId(id);
+		const result = await killConntrackConnection({
+			protocol: conn.protocol,
+			src: conn.src,
+			dst: conn.dst,
+			sport: conn.sport ? Number(conn.sport) : undefined,
+			dport: conn.dport ? Number(conn.dport) : undefined,
+			family: conn.family,
+		});
+		setKillingId(null);
+
+		if (result.ok) {
+			toast.success(t("Connection terminated."));
+			setDeletedIds((prev) => new Set(prev).add(id));
+		} else {
+			toast.error(result.error || t("Failed to terminate connection."));
+		}
+	};
+
+	const pageSize = 50;
+	const [currentPage, setCurrentPage] = useState(1);
+
+	useEffect(() => {
+		setCurrentPage(1);
+	}, [filterSrc, filterDst, filterProto, filterState, searchQuery]);
+
+	const totalPages = Math.max(1, Math.ceil(filteredConnections.length / pageSize));
+	const paginatedEntries = useMemo(() => {
+		const start = (currentPage - 1) * pageSize;
+		return filteredConnections.slice(start, start + pageSize);
+	}, [filteredConnections, currentPage, pageSize]);
+
+	const hasActiveFilters = filterSrc || filterDst || filterProto !== "all" || filterState !== "all" || searchQuery;
 
 	return (
 		<div className="grid gap-4">
-			<div className="grid gap-3 sm:grid-cols-3">
-				<MetricBlock label="Sockets" value={sockets.length} />
-				<MetricBlock label="TCP" value={protocolCounts.tcp ?? 0} />
-				<MetricBlock label="UDP" value={protocolCounts.udp ?? 0} />
+			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+				<MetricBlock label={t("Tracked connections")} value={totalConns.toLocaleString()} />
+				<MetricBlock label={t("TCP")} value={protocolCounts.tcp ?? conntrackSummary?.tcp ?? 0} />
+				<MetricBlock label={t("UDP")} value={protocolCounts.udp ?? conntrackSummary?.udp ?? 0} />
+				<MetricBlock
+					label={t("Utilization")}
+					value={
+						<div className="flex items-center gap-2">
+							<span>{`${usagePercent}%`}</span>
+							<span className="text-xs font-normal text-muted-foreground">({totalConns}/{maxConns})</span>
+						</div>
+					}
+				/>
 			</div>
-			<SocketTable entries={sockets} />
+
+			<Panel
+				title={
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<div className="flex items-center gap-2">
+							<Activity className="size-4 text-muted-foreground" />
+							<span>{t("Filter connections")}</span>
+						</div>
+						<div className="flex items-center gap-2">
+							<div className="flex rounded-md border p-0.5 text-xs bg-muted/40">
+								<button
+									className={`px-2.5 py-1 rounded transition-colors ${
+										viewMode === "conntrack" ? "bg-card text-foreground font-medium shadow-xs" : "text-muted-foreground hover:text-foreground"
+									}`}
+									onClick={() => setViewMode("conntrack")}
+									type="button"
+								>
+									{t("Conntrack flow table")} ({filteredConnections.length})
+								</button>
+								<button
+									className={`px-2.5 py-1 rounded transition-colors ${
+										viewMode === "sockets" ? "bg-card text-foreground font-medium shadow-xs" : "text-muted-foreground hover:text-foreground"
+									}`}
+									onClick={() => setViewMode("sockets")}
+									type="button"
+								>
+									{t("Active sockets")} ({sockets.length})
+								</button>
+							</div>
+							{hasActiveFilters ? (
+								<Button
+									onClick={() => {
+										setFilterSrc("");
+										setFilterDst("");
+										setFilterProto("all");
+										setFilterState("all");
+										setSearchQuery("");
+									}}
+									size="sm"
+									variant="ghost"
+								>
+									<X className="mr-1 size-3.5" />
+									{t("Reset filters")}
+								</Button>
+							) : null}
+						</div>
+					</div>
+				}
+			>
+				<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Source IP")}
+						</label>
+						<Input
+							className="h-8 text-xs"
+							onChange={(e) => setFilterSrc(e.target.value)}
+							placeholder="192.168.1..."
+							value={filterSrc}
+						/>
+					</div>
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Destination IP")}
+						</label>
+						<Input
+							className="h-8 text-xs"
+							onChange={(e) => setFilterDst(e.target.value)}
+							placeholder="1.1.1.1..."
+							value={filterDst}
+						/>
+					</div>
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Protocol")}
+						</label>
+						<select
+							className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-xs text-foreground outline-none focus-visible:border-ring"
+							onChange={(e) => setFilterProto(e.target.value)}
+							value={filterProto}
+						>
+							<option value="all">{t("All protocols")}</option>
+							<option value="tcp">TCP</option>
+							<option value="udp">UDP</option>
+							<option value="icmp">ICMP</option>
+							<option value="gre">GRE</option>
+						</select>
+					</div>
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("State")}
+						</label>
+						<select
+							className="h-8 w-full rounded-md border border-input bg-card px-2.5 text-xs text-foreground outline-none focus-visible:border-ring"
+							onChange={(e) => setFilterState(e.target.value)}
+							value={filterState}
+						>
+							<option value="all">{t("All states")}</option>
+							<option value="ESTABLISHED">ESTABLISHED</option>
+							<option value="TIME_WAIT">TIME_WAIT</option>
+							<option value="CLOSE_WAIT">CLOSE_WAIT</option>
+							<option value="SYN_SENT">SYN_SENT</option>
+							<option value="ASSURED">ASSURED</option>
+							<option value="UNREPLIED">UNREPLIED</option>
+						</select>
+					</div>
+					<div>
+						<label className="mb-1 block text-xs font-medium text-muted-foreground">
+							{t("Search")}
+						</label>
+						<Input
+							className="h-8 text-xs"
+							onChange={(e) => setSearchQuery(e.target.value)}
+							placeholder={t("Search connections...")}
+							value={searchQuery}
+						/>
+					</div>
+				</div>
+			</Panel>
+
+			{viewMode === "conntrack" ? (
+				<ConntrackTable
+					currentPage={currentPage}
+					entries={paginatedEntries}
+					killingId={killingId}
+					onKill={(conn) => void handleKillConnection(conn)}
+					onPageChange={setCurrentPage}
+					pageSize={pageSize}
+					totalCount={filteredConnections.length}
+					totalPages={totalPages}
+				/>
+			) : (
+				<SocketTable entries={sockets} />
+			)}
 		</div>
 	);
 }
@@ -5183,37 +5767,73 @@ function OutputLinesTable({ empty, lines, title }: { empty: string; lines: Outpu
 
 function RouteTable({ entries, title }: { entries: RouteEntry[]; title: string }) {
 	return (
-		<Panel title={title} flush>
+		<Panel flush title={`${title} (${entries.length})`}>
 			<div className="overflow-x-auto">
 				<table className="w-full min-w-[56rem] text-left text-sm">
 					<thead className="border-b text-xs uppercase text-muted-foreground">
 						<tr>
-							<th className="px-3 py-2 font-medium">Target</th>
-							<th className="px-3 py-2 font-medium">Via</th>
-							<th className="px-3 py-2 font-medium">Device</th>
-							<th className="px-3 py-2 font-medium">Table</th>
-							<th className="px-3 py-2 font-medium">Source</th>
-							<th className="px-3 py-2 font-medium">Scope</th>
-							<th className="px-3 py-2 font-medium">Metric</th>
+							<th className="px-3 py-2 font-medium">{t("Target")}</th>
+							<th className="px-3 py-2 font-medium">{t("Via")}</th>
+							<th className="px-3 py-2 font-medium">{t("Device")}</th>
+							<th className="px-3 py-2 font-medium">{t("Proto")}</th>
+							<th className="px-3 py-2 font-medium">{t("Metric")}</th>
+							<th className="px-3 py-2 font-medium">{t("Table")}</th>
+							<th className="px-3 py-2 font-medium">{t("Source")}</th>
+							<th className="px-3 py-2 font-medium">{t("Scope")}</th>
 						</tr>
 					</thead>
 					<tbody>
 						{entries.length ? (
 							entries.map((entry, index) => (
-								<tr className="border-b last:border-0" key={`${title}.${index}.${entry.target}.${entry.device}`}>
-									<td className="px-3 py-3 font-mono text-xs">{entry.target}</td>
-									<td className="px-3 py-3 font-mono text-xs">{entry.via}</td>
-									<td className="px-3 py-3">{entry.device}</td>
-									<td className="px-3 py-3">{entry.table}</td>
-									<td className="px-3 py-3 font-mono text-xs">{entry.source}</td>
-									<td className="px-3 py-3">{entry.scope}</td>
-									<td className="px-3 py-3">{entry.metric}</td>
+								<tr
+									className={`border-b last:border-0 transition-colors ${
+										entry.isDefault ? "border-l-4 border-l-primary bg-primary/5 font-medium dark:bg-primary/10" : "hover:bg-muted/30"
+									}`}
+									key={`${title}.${index}.${entry.target}.${entry.device}.${entry.table}`}
+								>
+									<td className="px-3 py-3 font-mono text-xs">
+										<div className="flex items-center gap-1.5">
+											{entry.isDefault ? (
+												<Badge className="px-1.5 py-0 text-[10px]" variant="default">
+													{t("Default")}
+												</Badge>
+											) : null}
+											<span>{entry.target}</span>
+										</div>
+									</td>
+									<td className="px-3 py-3 font-mono text-xs text-muted-foreground">
+										{entry.via === "none" ? "-" : entry.via}
+									</td>
+									<td className="px-3 py-3">
+										{entry.device === "none" ? (
+											<span className="text-muted-foreground">-</span>
+										) : (
+											<Badge className="font-mono text-xs" variant="secondary">
+												{entry.device}
+											</Badge>
+										)}
+									</td>
+									<td className="px-3 py-3">
+										<RouteProtoBadge proto={entry.proto} />
+									</td>
+									<td className="px-3 py-3 font-mono text-xs">
+										{entry.metric === "none" ? "-" : entry.metric}
+									</td>
+									<td className="px-3 py-3 text-xs">
+										{entry.table}
+									</td>
+									<td className="px-3 py-3 font-mono text-xs text-muted-foreground">
+										{entry.source === "none" ? "-" : entry.source}
+									</td>
+									<td className="px-3 py-3 text-xs text-muted-foreground">
+										{entry.scope === "none" ? "-" : entry.scope}
+									</td>
 								</tr>
 							))
 						) : (
 							<tr>
-								<td className="px-3 py-6 text-muted-foreground" colSpan={7}>
-									No entries found.
+								<td className="px-3 py-6 text-center text-muted-foreground" colSpan={8}>
+									{t("No routes matching filters.")}
 								</td>
 							</tr>
 						)}
@@ -5226,7 +5846,7 @@ function RouteTable({ entries, title }: { entries: RouteEntry[]; title: string }
 
 function RuleTable({ entries, title }: { entries: RuleEntry[]; title: string }) {
 	return (
-		<Panel title={title} flush>
+		<Panel flush title={title}>
 			<div className="overflow-x-auto">
 				<table className="w-full min-w-[38rem] text-left text-sm">
 					<thead className="border-b text-xs uppercase text-muted-foreground">
@@ -5259,7 +5879,7 @@ function RuleTable({ entries, title }: { entries: RuleEntry[]; title: string }) 
 
 function NeighborTable({ entries, title }: { entries: NeighborEntry[]; title: string }) {
 	return (
-		<Panel title={title} flush>
+		<Panel flush title={title}>
 			<div className="overflow-x-auto">
 				<table className="w-full min-w-[44rem] text-left text-sm">
 					<thead className="border-b text-xs uppercase text-muted-foreground">
@@ -5296,9 +5916,180 @@ function NeighborTable({ entries, title }: { entries: NeighborEntry[]; title: st
 	);
 }
 
+function NftGroupedView({
+	tables,
+	disabledHandles,
+	disablingHandle,
+	onToggleRule,
+}: {
+	tables: NftTableParsed[];
+	disabledHandles: Set<string>;
+	disablingHandle: string | null;
+	onToggleRule: (rule: NftRule) => void;
+}) {
+	if (!tables.length) {
+		return (
+			<Panel flush title={t("Rules")}>
+				<div className="p-6 text-center text-sm text-muted-foreground">
+					{t("No matching nftables rules found.")}
+				</div>
+			</Panel>
+		);
+	}
+
+	return (
+		<div className="grid gap-4">
+			{tables.map((table) => (
+				<div className="overflow-hidden rounded-lg border bg-card shadow-xs" key={`${table.family}.${table.name}`}>
+					<div className="flex flex-wrap items-center justify-between border-b bg-muted/40 px-4 py-3">
+						<div className="flex items-center gap-2">
+							<Shield className="size-4 text-primary" />
+							<span className="font-semibold text-sm">
+								table {table.family} {table.name}
+							</span>
+							<Badge className="text-xs" variant="secondary">
+								{table.chains.length} {t("Chains")}
+							</Badge>
+						</div>
+					</div>
+
+					<div className="divide-y">
+						{table.chains.map((chain) => (
+							<div className="p-4" key={`${table.family}.${table.name}.${chain.name}`}>
+								<div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+									<div className="flex flex-wrap items-center gap-2">
+										<span className="font-semibold text-xs text-foreground">
+											chain {chain.name}
+										</span>
+										{chain.hook ? (
+											<Badge className="text-[11px]" variant="outline">
+												hook: {chain.hook}
+											</Badge>
+										) : null}
+										{chain.policy ? (
+											<Badge
+												className={`text-[11px] ${
+													chain.policy === "drop"
+														? "border-rose-300 bg-rose-500/10 text-rose-600 dark:border-rose-800 dark:text-rose-400"
+														: "border-emerald-300 bg-emerald-500/10 text-emerald-600 dark:border-emerald-800 dark:text-emerald-400"
+												}`}
+												variant="outline"
+											>
+												policy: {chain.policy}
+											</Badge>
+										) : null}
+										{chain.priority ? (
+											<span className="text-[11px] text-muted-foreground">
+												prio: {chain.priority}
+											</span>
+										) : null}
+									</div>
+									<span className="text-xs text-muted-foreground">
+										{chain.rules.length} {t("Rules")}
+									</span>
+								</div>
+
+								{chain.rules.length ? (
+									<div className="overflow-x-auto rounded-md border bg-card/60">
+										<table className="w-full min-w-[50rem] text-left text-xs">
+											<thead className="border-b bg-muted/20 text-[11px] uppercase text-muted-foreground">
+												<tr>
+													<th className="px-3 py-2 font-medium">{t("Action")}</th>
+													<th className="px-3 py-2 font-medium">{t("Expression")}</th>
+													<th className="px-3 py-2 font-medium">{t("Packets")}</th>
+													<th className="px-3 py-2 font-medium">{t("Bytes")}</th>
+													<th className="px-3 py-2 font-medium">{t("Comment")}</th>
+													<th className="px-3 py-2 font-medium">{t("Handle")}</th>
+													<th className="px-3 py-2 text-right font-medium">{t("Action")}</th>
+												</tr>
+											</thead>
+											<tbody>
+												{chain.rules.map((rule, rIdx) => {
+													const ruleKey = `${rule.table}.${rule.chain}.${rule.handle ?? rIdx}`;
+													const isDisabled = disabledHandles.has(ruleKey);
+													const isDisabling = disablingHandle === ruleKey;
+
+													const actionColor = rule.action === "accept"
+														? "text-emerald-600 dark:text-emerald-400 font-semibold"
+														: rule.action === "drop" || rule.action === "reject"
+														? "text-rose-600 dark:text-rose-400 font-semibold"
+														: "text-foreground";
+
+													return (
+														<tr
+															className={`border-b last:border-0 transition-colors ${
+																isDisabled ? "bg-muted/60 opacity-60 line-through" : "hover:bg-muted/30"
+															}`}
+															key={`${ruleKey}.${rIdx}`}
+														>
+															<td className={`px-3 py-2.5 ${actionColor}`}>
+																<Badge className="text-xs uppercase" variant="outline">
+																	{rule.action}
+																</Badge>
+															</td>
+															<td className="px-3 py-2.5 font-mono text-xs">
+																<div className="flex flex-wrap items-center gap-1.5">
+																	<NftSyntaxHighlighter expression={rule.expression} />
+																	{isDisabled ? (
+																		<Badge className="ml-2 text-[10px]" variant="destructive">
+																			{t("Disabled (Runtime)")}
+																		</Badge>
+																	) : null}
+																</div>
+															</td>
+															<td className="px-3 py-2.5 font-mono text-muted-foreground">
+																{formatPackets(rule.packets)}
+															</td>
+															<td className="px-3 py-2.5 font-mono text-muted-foreground">
+																{formatBytes(rule.bytes)}
+															</td>
+															<td className="px-3 py-2.5 italic text-muted-foreground">
+																{rule.comment || "-"}
+															</td>
+															<td className="px-3 py-2.5 font-mono text-[11px] text-muted-foreground">
+																{rule.handle ? `#${rule.handle}` : "-"}
+															</td>
+															<td className="px-3 py-2.5 text-right">
+																{rule.handle && !isDisabled ? (
+																	<Button
+																		className="h-6 px-2 text-[11px] text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+																		disabled={isDisabling}
+																		onClick={() => onToggleRule(rule)}
+																		size="sm"
+																		variant="ghost"
+																	>
+																		{isDisabling ? (
+																			<Loader2 className="mr-1 size-3 animate-spin" />
+																		) : (
+																			<Ban className="mr-1 size-3" />
+																		)}
+																		{t("Runtime Disable")}
+																	</Button>
+																) : null}
+															</td>
+														</tr>
+													);
+												})}
+											</tbody>
+										</table>
+									</div>
+								) : (
+									<div className="rounded-md border border-dashed py-3 text-center text-xs text-muted-foreground">
+										{t("No nftables rules found.")}
+									</div>
+								)}
+							</div>
+						))}
+					</div>
+				</div>
+			))}
+		</div>
+	);
+}
+
 function NftChainTable({ entries }: { entries: NftChain[] }) {
 	return (
-		<Panel title="Chains" flush>
+		<Panel flush title="Chains">
 			<div className="overflow-x-auto">
 				<table className="w-full min-w-[42rem] text-left text-sm">
 					<thead className="border-b text-xs uppercase text-muted-foreground">
@@ -5311,7 +6102,7 @@ function NftChainTable({ entries }: { entries: NftChain[] }) {
 					</thead>
 					<tbody>
 						{entries.map((entry) => (
-							<tr className="border-b last:border-0" key={entry.name}>
+							<tr className="border-b last:border-0" key={`${entry.table}.${entry.name}`}>
 								<td className="px-3 py-3 font-medium">{entry.name}</td>
 								<td className="px-3 py-3">{entry.hook || "none"}</td>
 								<td className="px-3 py-3">{entry.policy || "none"}</td>
@@ -5327,7 +6118,7 @@ function NftChainTable({ entries }: { entries: NftChain[] }) {
 
 function NftRuleTable({ entries }: { entries: NftRule[] }) {
 	return (
-		<Panel title="Rules" flush>
+		<Panel flush title="Rules">
 			<div className="overflow-x-auto">
 				<table className="w-full min-w-[64rem] text-left text-sm">
 					<thead className="border-b text-xs uppercase text-muted-foreground">
@@ -5362,6 +6153,182 @@ function NftRuleTable({ entries }: { entries: NftRule[] }) {
 					</tbody>
 				</table>
 			</div>
+		</Panel>
+	);
+}
+
+function ConntrackTable({
+	entries,
+	totalCount,
+	currentPage,
+	totalPages,
+	pageSize,
+	onPageChange,
+	onKill,
+	killingId,
+}: {
+	entries: ConntrackEntry[];
+	totalCount: number;
+	currentPage: number;
+	totalPages: number;
+	pageSize: number;
+	onPageChange: (page: number) => void;
+	onKill: (entry: ConntrackEntry) => void;
+	killingId: string | null;
+}) {
+	const startItem = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+	const endItem = Math.min(currentPage * pageSize, totalCount);
+
+	return (
+		<Panel
+			flush
+			title={
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<span>{t("Connection tracking")}</span>
+					<span className="text-xs font-normal text-muted-foreground">
+						{t("Showing")} {startItem} - {endItem} {t("of")} {totalCount} {t("connections")}
+					</span>
+				</div>
+			}
+		>
+			<div className="overflow-x-auto">
+				<table className="w-full min-w-[64rem] text-left text-sm">
+					<thead className="border-b text-xs uppercase text-muted-foreground">
+						<tr>
+							<th className="px-3 py-2 font-medium">{t("Protocol")}</th>
+							<th className="px-3 py-2 font-medium">{t("State")}</th>
+							<th className="px-3 py-2 font-medium">{t("Source / Port")}</th>
+							<th className="px-3 py-2 font-medium">{t("Destination / Port")}</th>
+							<th className="px-3 py-2 font-medium">{t("Timeout")}</th>
+							<th className="px-3 py-2 font-medium">{t("Packets")} / {t("Bytes")}</th>
+							<th className="px-3 py-2 text-right font-medium">{t("Action")}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{entries.length ? (
+							entries.map((entry, index) => {
+								const id = `${entry.src}:${entry.sport}->${entry.dst}:${entry.dport}`;
+								const isKilling = killingId === id;
+								const stateUpper = entry.state.toUpperCase();
+								const isEstablished = stateUpper === "ESTABLISHED" || entry.assured;
+								const isTimeWait = stateUpper.includes("WAIT") || stateUpper.includes("CLOSE");
+								const stateBadgeClass = isEstablished
+									? "border-emerald-300 bg-emerald-500/10 text-emerald-600 dark:border-emerald-800 dark:text-emerald-400"
+									: isTimeWait
+									? "border-amber-300 bg-amber-500/10 text-amber-600 dark:border-amber-800 dark:text-amber-400"
+									: "bg-muted text-muted-foreground";
+
+								return (
+									<tr className="border-b last:border-0 hover:bg-muted/30 transition-colors" key={`${id}.${index}`}>
+										<td className="px-3 py-3 font-mono text-xs">
+											<div className="flex items-center gap-1.5">
+												<Badge className="text-xs uppercase" variant="outline">
+													{entry.protocol}
+												</Badge>
+												<span className="text-[11px] text-muted-foreground">({entry.family})</span>
+											</div>
+										</td>
+										<td className="px-3 py-3">
+											<Badge className={`text-xs ${stateBadgeClass}`} variant="outline">
+												{entry.state || "ACTIVE"}
+											</Badge>
+										</td>
+										<td className="px-3 py-3 font-mono text-xs">
+											<div className="font-semibold text-foreground">{entry.src}</div>
+											{entry.sport ? (
+												<div className="text-[11px] text-muted-foreground">Port {entry.sport}</div>
+											) : null}
+										</td>
+										<td className="px-3 py-3 font-mono text-xs">
+											<div className="font-semibold text-foreground">{entry.dst}</div>
+											{entry.dport ? (
+												<div className="text-[11px] text-muted-foreground">Port {entry.dport}</div>
+											) : null}
+										</td>
+										<td className="px-3 py-3 font-mono text-xs text-muted-foreground">
+											{formatDuration(entry.timeout)}
+										</td>
+										<td className="px-3 py-3 text-xs text-muted-foreground">
+											{entry.packets || entry.bytes ? (
+												<div>
+													{entry.packets ? `${formatPackets(entry.packets)} pkts` : ""}
+													{entry.bytes ? ` · ${formatBytes(entry.bytes)}` : ""}
+												</div>
+											) : (
+												"-"
+											)}
+										</td>
+										<td className="px-3 py-3 text-right">
+											<Button
+												className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+												disabled={isKilling}
+												onClick={() => onKill(entry)}
+												size="sm"
+												variant="ghost"
+											>
+												{isKilling ? (
+													<Loader2 className="mr-1 size-3 animate-spin" />
+												) : (
+													<Trash2 className="mr-1 size-3" />
+												)}
+												{t("Kill")}
+											</Button>
+										</td>
+									</tr>
+								);
+							})
+						) : (
+							<tr>
+								<td className="px-3 py-6 text-center text-muted-foreground" colSpan={7}>
+									{t("No connections matching filters.")}
+								</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</div>
+
+			{totalPages > 1 ? (
+				<div className="flex flex-wrap items-center justify-between gap-3 border-t p-3 text-xs">
+					<div className="text-muted-foreground">
+						{t("Page")} {currentPage} {t("of")} {totalPages}
+					</div>
+					<div className="flex items-center gap-1.5">
+						<Button
+							disabled={currentPage <= 1}
+							onClick={() => onPageChange(1)}
+							size="sm"
+							variant="outline"
+						>
+							{t("First")}
+						</Button>
+						<Button
+							disabled={currentPage <= 1}
+							onClick={() => onPageChange(currentPage - 1)}
+							size="sm"
+							variant="outline"
+						>
+							{t("Previous")}
+						</Button>
+						<Button
+							disabled={currentPage >= totalPages}
+							onClick={() => onPageChange(currentPage + 1)}
+							size="sm"
+							variant="outline"
+						>
+							{t("Next")}
+						</Button>
+						<Button
+							disabled={currentPage >= totalPages}
+							onClick={() => onPageChange(totalPages)}
+							size="sm"
+							variant="outline"
+						>
+							{t("Last")}
+						</Button>
+					</div>
+				</div>
+			) : null}
 		</Panel>
 	);
 }
@@ -6314,23 +7281,342 @@ function parseSimpleLines(output: string) {
 		.filter(Boolean);
 }
 
-function parseRoutes(output: string): RouteEntry[] {
+function parseRoutes(output: string, family: "ipv4" | "ipv6" = "ipv4"): RouteEntry[] {
 	return output
 		.split("\n")
 		.map((line) => line.trim())
 		.filter(Boolean)
 		.map((line) => {
 			const parts = line.split(/\s+/);
+			let target = parts[0] ?? "unknown";
+			if (["local", "broadcast", "multicast", "unreachable", "blackhole", "prohibit"].includes(target) && parts[1]) {
+				target = `${target} ${parts[1]}`;
+			}
+			const isDefault = target === "default" || target === "0.0.0.0/0" || target === "::/0";
 			return {
-				target: parts[0] ?? "unknown",
+				target,
 				via: tokenAfter(parts, "via"),
 				device: tokenAfter(parts, "dev"),
 				table: tokenAfter(parts, "table") || "main",
 				source: tokenAfter(parts, "src"),
 				scope: tokenAfter(parts, "scope"),
 				metric: tokenAfter(parts, "metric"),
+				proto: tokenAfter(parts, "proto"),
+				family,
+				isDefault,
 			};
 		});
+}
+
+function exportRoutesToJson(routes: RouteEntry[], filename = "routes.json") {
+	const dataStr = JSON.stringify(routes, null, 2);
+	const blob = new Blob([dataStr], { type: "application/json" });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = filename;
+	document.body.appendChild(link);
+	link.click();
+	document.body.removeChild(link);
+	URL.revokeObjectURL(url);
+}
+
+function exportRoutesToCsv(routes: RouteEntry[], filename = "routes.csv") {
+	const headers = ["Target", "Via", "Device", "Proto", "Metric", "Table", "Source", "Scope", "Family"];
+	const rows = routes.map((r) => [
+		`"${r.target}"`,
+		`"${r.via === "none" ? "" : r.via}"`,
+		`"${r.device === "none" ? "" : r.device}"`,
+		`"${r.proto === "none" ? "" : r.proto}"`,
+		`"${r.metric === "none" ? "" : r.metric}"`,
+		`"${r.table}"`,
+		`"${r.source === "none" ? "" : r.source}"`,
+		`"${r.scope === "none" ? "" : r.scope}"`,
+		`"${r.family}"`,
+	]);
+	const csvContent = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+	const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = filename;
+	document.body.appendChild(link);
+	link.click();
+	document.body.removeChild(link);
+	URL.revokeObjectURL(url);
+}
+
+function RouteProtoBadge({ proto }: { proto: string }) {
+	if (!proto || proto === "none") {
+		return <span className="text-xs text-muted-foreground">-</span>;
+	}
+	const p = proto.toLowerCase();
+	let colorClass = "bg-muted text-muted-foreground";
+	if (p === "static" || p === "boot") {
+		colorClass = "bg-sky-500/10 text-sky-600 border-sky-300 dark:border-sky-800 dark:text-sky-400";
+	} else if (p === "kernel") {
+		colorClass = "bg-slate-500/10 text-slate-600 border-slate-300 dark:border-slate-800 dark:text-slate-400";
+	} else if (p === "dhcp" || p === "ra") {
+		colorClass = "bg-emerald-500/10 text-emerald-600 border-emerald-300 dark:border-emerald-800 dark:text-emerald-400";
+	} else if (p === "ospf" || p === "bgp" || p === "babel" || p === "zebra") {
+		colorClass = "bg-purple-500/10 text-purple-600 border-purple-300 dark:border-purple-800 dark:text-purple-400";
+	}
+	return (
+		<Badge className={`font-mono text-xs ${colorClass}`} variant="outline">
+			{proto}
+		</Badge>
+	);
+}
+
+function formatBytes(bytesStr: string): string {
+	const bytes = Number(bytesStr);
+	if (isNaN(bytes) || bytes === 0) return "0 B";
+	const units = ["B", "KB", "MB", "GB", "TB"];
+	const i = Math.floor(Math.log(bytes) / Math.log(1024));
+	const unitIndex = Math.min(i, units.length - 1);
+	return `${(bytes / Math.pow(1024, unitIndex)).toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatPackets(pktsStr: string): string {
+	const pkts = Number(pktsStr);
+	if (isNaN(pkts)) return pktsStr || "0";
+	return pkts.toLocaleString();
+}
+
+function formatDuration(seconds: number): string {
+	if (!seconds || isNaN(seconds) || seconds < 0) return "-";
+	if (seconds < 60) return `${seconds}s`;
+	const m = Math.floor(seconds / 60);
+	const s = seconds % 60;
+	if (m < 60) return `${m}m ${s < 10 ? "0" : ""}${s}s`;
+	const h = Math.floor(m / 60);
+	const rm = m % 60;
+	if (h < 24) return `${h}h ${rm < 10 ? "0" : ""}${rm}m`;
+	const d = Math.floor(h / 24);
+	const rh = h % 24;
+	return `${d}d ${rh}h`;
+}
+
+function NftSyntaxHighlighter({ expression }: { expression: string }) {
+	const tokens = useMemo(() => {
+		const parts: ReactNode[] = [];
+		const regex = /(comment\s+"[^"]*")|("[^"]*")|(\b(?:ip6?|tcp|udp|icmpv6?|ct|meta|pkttype|ether|vlan|fib|mark|daddr|saddr|dport|sport|iifname|oifname|state|status|length|protocol|type)\b)|(\b(?:accept|drop|reject|masquerade|snat|dnat|redirect|jump|goto|return|counter|log|continue)\b)|(\b\d+(?:\.\d+){3}(?:\/\d+)?\b|\b[0-9a-fA-F:]+\/\d+\b|\b\d+\b)|([{}!=,><]+)|(\S+)/g;
+
+		let match: RegExpExecArray | null;
+		let lastIdx = 0;
+		let keyIdx = 0;
+
+		while ((match = regex.exec(expression)) !== null) {
+			if (match.index > lastIdx) {
+				parts.push(<span key={keyIdx++}>{expression.slice(lastIdx, match.index)}</span>);
+			}
+			lastIdx = regex.lastIndex;
+
+			const [full, comment, str, keyword, action, val, symbol, other] = match;
+			if (comment || str) {
+				parts.push(<span className="italic text-emerald-600 dark:text-emerald-400" key={keyIdx++}>{full}</span>);
+			} else if (keyword) {
+				parts.push(<span className="font-semibold text-sky-600 dark:text-sky-400" key={keyIdx++}>{full}</span>);
+			} else if (action) {
+				const isAccept = full === "accept";
+				const isDrop = full === "drop" || full === "reject";
+				const isJump = full === "jump" || full === "goto" || full === "return";
+				const color = isAccept ? "text-emerald-600 font-bold dark:text-emerald-400" : isDrop ? "text-rose-600 font-bold dark:text-rose-400" : isJump ? "text-amber-600 font-semibold dark:text-amber-400" : "text-violet-600 font-semibold dark:text-violet-400";
+				parts.push(<span className={color} key={keyIdx++}>{full}</span>);
+			} else if (val) {
+				parts.push(<span className="text-amber-700 dark:text-amber-300" key={keyIdx++}>{full}</span>);
+			} else if (symbol) {
+				parts.push(<span className="text-muted-foreground" key={keyIdx++}>{full}</span>);
+			} else {
+				parts.push(<span key={keyIdx++}>{other}</span>);
+			}
+		}
+
+		if (lastIdx < expression.length) {
+			parts.push(<span key={keyIdx++}>{expression.slice(lastIdx)}</span>);
+		}
+
+		return parts;
+	}, [expression]);
+
+	return <span className="font-mono text-xs leading-relaxed">{tokens}</span>;
+}
+
+type NftChainParsed = {
+	table: string;
+	name: string;
+	hook?: string;
+	policy?: string;
+	priority?: string;
+	rules: NftRule[];
+};
+
+type NftTableParsed = {
+	family: string;
+	name: string;
+	chains: NftChainParsed[];
+};
+
+function parseNftGrouped(output: string): NftTableParsed[] {
+	const tables: NftTableParsed[] = [];
+	let currentTable: NftTableParsed | null = null;
+	let currentChain: NftChainParsed | null = null;
+
+	for (const rawLine of output.split("\n")) {
+		const line = rawLine.trim();
+		if (!line) continue;
+
+		const tableMatch = /^table\s+([a-zA-Z0-9_-]+)\s+([a-zA-Z0-9_-]+)\s*\{/.exec(line);
+		if (tableMatch) {
+			currentTable = {
+				family: tableMatch[1],
+				name: tableMatch[2],
+				chains: [],
+			};
+			tables.push(currentTable);
+			currentChain = null;
+			continue;
+		}
+
+		if (!currentTable) continue;
+
+		const chainMatch = /^chain\s+([a-zA-Z0-9_.-]+)\s*\{/.exec(line);
+		if (chainMatch) {
+			currentChain = {
+				table: `${currentTable.family} ${currentTable.name}`,
+				name: chainMatch[1],
+				rules: [],
+			};
+			currentTable.chains.push(currentChain);
+			continue;
+		}
+
+		if (line === "}") {
+			if (currentChain) {
+				currentChain = null;
+			} else {
+				currentTable = null;
+			}
+			continue;
+		}
+
+		if (!currentChain) continue;
+
+		if (line.startsWith("type ") || line.startsWith("hook ") || line.startsWith("policy ")) {
+			const hookMatch = /hook\s+([a-zA-Z0-9_.-]+)/.exec(line);
+			const policyMatch = /policy\s+([a-zA-Z0-9_.-]+)/.exec(line);
+			const prioMatch = /priority\s+([a-zA-Z0-9_.-]+)/.exec(line);
+
+			if (hookMatch) currentChain.hook = hookMatch[1];
+			if (policyMatch) currentChain.policy = policyMatch[1].replace(";", "");
+			if (prioMatch) currentChain.priority = prioMatch[1].replace(";", "");
+			continue;
+		}
+
+		const counter = /counter packets\s+(\d+)\s+bytes\s+(\d+)/.exec(line);
+		const comment = /comment\s+"([^"]+)"/.exec(line);
+		const handleMatch = /#\s*handle\s+(\d+)/.exec(line);
+		const action = nftAction(line);
+		const cleanExpr = line
+			.replace(/\s+comment\s+"[^"]+"/, "")
+			.replace(/\s+#\s*handle\s+\d+/, "");
+
+		currentChain.rules.push({
+			table: `${currentTable.family} ${currentTable.name}`,
+			chain: currentChain.name,
+			handle: handleMatch ? Number(handleMatch[1]) : undefined,
+			action,
+			packets: counter?.[1] ?? "0",
+			bytes: counter?.[2] ?? "0",
+			comment: comment?.[1] ?? "",
+			expression: cleanExpr,
+			raw: line,
+		});
+	}
+
+	return tables;
+}
+
+function parseConntrack(output: string): ConntrackEntry[] {
+	if (!output) return [];
+	const entries: ConntrackEntry[] = [];
+	const lines = output.split("\n");
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]?.trim();
+		if (!line) continue;
+
+		const parts = line.split(/\s+/);
+		const family = parts[0]?.includes("6") ? "ipv6" : "ipv4";
+		const protocol = parts[2] ?? (parts[1] && isNaN(Number(parts[1])) ? parts[1] : "unknown");
+		const protoNum = parts[1] && !isNaN(Number(parts[1])) ? parts[1] : (parts[3] ?? "0");
+
+		let timeout = 0;
+		let state = "";
+		for (let j = 3; j < Math.min(parts.length, 6); j++) {
+			const p = parts[j];
+			if (p && /^\d+$/.test(p)) {
+				timeout = Number(p);
+				const nextToken = parts[j + 1];
+				if (nextToken && !nextToken.includes("=") && !nextToken.startsWith("[")) {
+					state = nextToken;
+				}
+				break;
+			}
+		}
+
+		const srcs: string[] = [];
+		const dsts: string[] = [];
+		const sports: string[] = [];
+		const dports: string[] = [];
+		let packets = "";
+		let bytes = "";
+		let mark = "";
+		let assured = false;
+		let unreplied = false;
+
+		for (const part of parts) {
+			if (part.startsWith("src=")) srcs.push(part.slice(4));
+			else if (part.startsWith("dst=")) dsts.push(part.slice(4));
+			else if (part.startsWith("sport=")) sports.push(part.slice(6));
+			else if (part.startsWith("dport=")) dports.push(part.slice(6));
+			else if (part.startsWith("packets=")) packets = part.slice(8);
+			else if (part.startsWith("bytes=")) bytes = part.slice(6);
+			else if (part.startsWith("mark=")) mark = part.slice(5);
+			else if (part === "[ASSURED]") assured = true;
+			else if (part === "[UNREPLIED]") unreplied = true;
+		}
+
+		if (!state) {
+			if (protocol.toLowerCase() === "udp") state = unreplied ? "UNREPLIED" : assured ? "ASSURED" : "UDP";
+			else if (protocol.toLowerCase() === "icmp") state = "ICMP";
+			else state = assured ? "ASSURED" : "ACTIVE";
+		}
+
+		entries.push({
+			family,
+			protocol: protocol.toLowerCase(),
+			protoNum,
+			timeout,
+			state,
+			src: srcs[0] ?? "",
+			dst: dsts[0] ?? "",
+			sport: sports[0] ?? "",
+			dport: dports[0] ?? "",
+			replySrc: srcs[1] ?? "",
+			replyDst: dsts[1] ?? "",
+			replySport: sports[1] ?? "",
+			replyDport: dports[1] ?? "",
+			packets,
+			bytes,
+			assured,
+			unreplied,
+			mark,
+			raw: line,
+		});
+	}
+
+	return entries;
 }
 
 function parseRules(output: string): RuleEntry[] {
@@ -6366,13 +7652,20 @@ function parseNeighbors(output: string): NeighborEntry[] {
 function parseNftChains(output: string): NftChain[] {
 	const chains: NftChain[] = [];
 	let current: NftChain | null = null;
+	let currentTable = "inet fw4";
 
 	for (const line of output.split("\n")) {
 		const trimmed = line.trim();
+		const tableMatch = /^table\s+([a-zA-Z0-9_-]+\s+[a-zA-Z0-9_-]+)\s*\{/.exec(trimmed);
+		if (tableMatch) {
+			currentTable = tableMatch[1];
+			continue;
+		}
+
 		const chain = /^chain\s+([A-Za-z0-9_.-]+)\s+\{/.exec(trimmed);
 
 		if (chain) {
-			current = { name: chain[1], hook: "", policy: "", rules: 0 };
+			current = { table: currentTable, name: chain[1], hook: "", policy: "", priority: "", rules: 0 };
 			chains.push(current);
 			continue;
 		}
@@ -6388,6 +7681,7 @@ function parseNftChains(output: string): NftChain[] {
 
 		const hook = /hook\s+([A-Za-z0-9_.-]+)/.exec(trimmed);
 		const policy = /policy\s+([A-Za-z0-9_.-]+)/.exec(trimmed);
+		const prio = /priority\s+([A-Za-z0-9_.-]+)/.exec(trimmed);
 
 		if (hook) {
 			current.hook = hook[1];
@@ -6395,6 +7689,10 @@ function parseNftChains(output: string): NftChain[] {
 
 		if (policy) {
 			current.policy = policy[1].replace(";", "");
+		}
+
+		if (prio) {
+			current.priority = prio[1].replace(";", "");
 		}
 
 		if (trimmed && !trimmed.startsWith("type ")) {
@@ -6407,10 +7705,17 @@ function parseNftChains(output: string): NftChain[] {
 
 function parseNftRules(output: string): NftRule[] {
 	const rules: NftRule[] = [];
+	let currentTable = "inet fw4";
 	let chain = "";
 
 	for (const line of output.split("\n")) {
 		const trimmed = line.trim();
+		const tableMatch = /^table\s+([a-zA-Z0-9_-]+\s+[a-zA-Z0-9_-]+)\s*\{/.exec(trimmed);
+		if (tableMatch) {
+			currentTable = tableMatch[1];
+			continue;
+		}
+
 		const chainMatch = /^chain\s+([A-Za-z0-9_.-]+)\s+\{/.exec(trimmed);
 
 		if (chainMatch) {
@@ -6429,15 +7734,19 @@ function parseNftRules(output: string): NftRule[] {
 
 		const counter = /counter packets\s+(\d+)\s+bytes\s+(\d+)/.exec(trimmed);
 		const comment = /comment\s+"([^"]+)"/.exec(trimmed);
+		const handleMatch = /#\s*handle\s+(\d+)/.exec(trimmed);
 		const action = nftAction(trimmed);
 
 		rules.push({
+			table: currentTable,
 			chain,
+			handle: handleMatch ? Number(handleMatch[1]) : undefined,
 			action,
 			packets: counter?.[1] ?? "0",
 			bytes: counter?.[2] ?? "0",
 			comment: comment?.[1] ?? "",
-			expression: trimmed.replace(/\s+comment\s+"[^"]+"/, ""),
+			expression: trimmed.replace(/\s+comment\s+"[^"]+"/, "").replace(/\s+#\s*handle\s+\d+/, ""),
+			raw: trimmed,
 		});
 	}
 

@@ -10810,7 +10810,7 @@ function native_page(page) {
 	}
 	else if (page == 'firewall-status') {
 		data.commands = [
-			{ title: 'nftables ruleset', output: shell_output('nft --terse list ruleset | head -n 500') }
+			{ title: 'nftables ruleset', output: shell_output('nft -a list ruleset 2>/dev/null || nft --terse list ruleset 2>/dev/null || nft list ruleset') }
 		];
 	}
 	else if (page == 'logs') {
@@ -10825,9 +10825,12 @@ function native_page(page) {
 		];
 	}
 	else if (page == 'connections') {
+		let conntrackData = readfile('/proc/net/nf_conntrack') || readfile('/proc/net/ip_conntrack') || '';
 		data.commands = [
-			{ title: 'Active sockets', output: shell_output('ss -tunap | head -n 500') }
+			{ title: 'Active sockets', output: shell_output('ss -tunap | head -n 500') },
+			{ title: 'Connection tracking', output: conntrackData }
 		];
+		data.conntrack = read_conntrack_summary();
 	}
 	else if (page == 'wireless') {
 		data.sections = collect_uci_config('wireless', ['wifi-device', 'wifi-iface']);
@@ -11160,6 +11163,83 @@ const methods = {
 	conntrack_summary: {
 		call: function() {
 			return respond(read_conntrack_summary());
+		}
+	},
+
+	conntrack_kill: {
+		args: {
+			protocol: 'tcp',
+			src: '',
+			dst: '',
+			sport: 0,
+			dport: 0,
+			family: 'ipv4'
+		},
+		call: function(request) {
+			let protocol = request.args.protocol;
+			let src = request.args.src;
+			let dst = request.args.dst;
+			let sport = int(request.args.sport);
+			let dport = int(request.args.dport);
+			let family = request.args.family || 'ipv4';
+
+			if (!protocol || !src || !dst) {
+				return respond({ error: 'Missing required parameters (protocol, src, dst)' });
+			}
+			if (!match(protocol, /^(tcp|udp|icmp|gre|all)$/i)) {
+				return respond({ error: 'Invalid protocol' });
+			}
+			if (!match(src, /^[0-9a-fA-F:.]+$/) || !match(dst, /^[0-9a-fA-F:.]+$/)) {
+				return respond({ error: 'Invalid IP address' });
+			}
+			if (family != 'ipv4' && family != 'ipv6') {
+				return respond({ error: 'Invalid address family' });
+			}
+
+			let cmd = sprintf('conntrack -D -p %s -s %s -d %s', protocol, src, dst);
+			if (sport > 0) cmd = sprintf('%s --sport %d', cmd, sport);
+			if (dport > 0) cmd = sprintf('%s --dport %d', cmd, dport);
+			if (family == 'ipv6') cmd = sprintf('%s -f ipv6', cmd);
+
+			let res = shell_output(cmd + ' 2>&1');
+			return respond({
+				ok: true,
+				output: trim(res)
+			});
+		}
+	},
+
+	nft_toggle_rule: {
+		args: {
+			table: '',
+			chain: '',
+			handle: 0,
+			action: 'disable'
+		},
+		call: function(request) {
+			let table = request.args.table;
+			let chain = request.args.chain;
+			let handle = int(request.args.handle);
+			let action = request.args.action || 'disable';
+
+			if (!table || !chain || handle <= 0) {
+				return respond({ error: 'Missing required parameters (table, chain, handle)' });
+			}
+			if (!match(table, /^[a-zA-Z0-9_\-\s]+$/) || !match(chain, /^[a-zA-Z0-9_\-]+$/)) {
+				return respond({ error: 'Invalid table or chain name' });
+			}
+			if (action != 'disable' && action != 'delete' && action != 'enable') {
+				return respond({ error: 'Invalid action' });
+			}
+
+			let cmd = sprintf('nft delete rule %s %s handle %d', table, chain, handle);
+			let res = shell_output(cmd + ' 2>&1');
+			return respond({
+				ok: true,
+				action,
+				handle,
+				output: trim(res)
+			});
 		}
 	},
 

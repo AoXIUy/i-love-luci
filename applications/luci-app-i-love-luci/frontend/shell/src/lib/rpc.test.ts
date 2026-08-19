@@ -8,8 +8,10 @@ import {
 	getNetworkProtocols,
 	getProcessStats,
 	getThermalHistory,
+	killConntrackConnection,
 	probeAuthSession,
 	runNetworkInterfaceAction,
+	toggleNftRule,
 	validateInterfaceConfig,
 } from "@/lib/rpc";
 
@@ -393,6 +395,109 @@ describe("extended dashboard RPCs", () => {
 		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fail")));
 		const fallback = await runNetworkInterfaceAction("lan", "restart");
 		expect(fallback.ok).toBe(false);
+	});
+});
+
+describe("killConntrackConnection", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("kills connection successfully via RPC", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: {
+								ok: true,
+								message: "Connection deleted.",
+							},
+						},
+					],
+				}),
+			),
+		);
+
+		const res = await killConntrackConnection({
+			protocol: "tcp",
+			src: "192.168.1.100",
+			dst: "1.1.1.1",
+			sport: 54321,
+			dport: 443,
+			family: "ipv4",
+		});
+
+		expect(res.ok).toBe(true);
+	});
+
+	it("handles RPC failure gracefully", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
+
+		const res = await killConntrackConnection({
+			protocol: "tcp",
+			src: "192.168.1.100",
+			dst: "1.1.1.1",
+		});
+
+		expect(res.ok).toBe(false);
+		expect(res.error).toBeDefined();
+	});
+});
+
+describe("toggleNftRule", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("disables nftables rule successfully via RPC", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [
+						0,
+						{
+							ok: true,
+							data: {
+								ok: true,
+								message: "Rule deleted in runtime.",
+							},
+						},
+					],
+				}),
+			),
+		);
+
+		const res = await toggleNftRule({
+			table: "inet fw4",
+			chain: "input_lan",
+			handle: 42,
+			action: "disable",
+		});
+
+		expect(res.ok).toBe(true);
+	});
+
+	it("handles nft delete failure gracefully", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("nft error")));
+
+		const res = await toggleNftRule({
+			table: "inet fw4",
+			chain: "input_lan",
+			handle: 99,
+			action: "disable",
+		});
+
+		expect(res.ok).toBe(false);
+		expect(res.error).toBeDefined();
 	});
 });
 

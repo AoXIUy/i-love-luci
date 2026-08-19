@@ -254,6 +254,99 @@ export type ConntrackSummary = {
 	};
 };
 
+export type ConntrackEntry = {
+	family: "ipv4" | "ipv6";
+	protocol: string;
+	protoNum: string;
+	timeout: number;
+	state: string;
+	src: string;
+	dst: string;
+	sport: string;
+	dport: string;
+	replySrc: string;
+	replyDst: string;
+	replySport: string;
+	replyDport: string;
+	packets?: string;
+	bytes?: string;
+	assured?: boolean;
+	unreplied?: boolean;
+	mark?: string;
+	raw: string;
+};
+
+export type NftRuleItem = {
+	table: string;
+	chain: string;
+	handle?: number;
+	action: string;
+	packets: string;
+	bytes: string;
+	comment: string;
+	expression: string;
+	raw: string;
+	disabled?: boolean;
+};
+
+export type NftChainItem = {
+	name: string;
+	table: string;
+	hook?: string;
+	priority?: string;
+	policy?: string;
+	rules: NftRuleItem[];
+};
+
+export type NftTableItem = {
+	family: string;
+	name: string;
+	chains: NftChainItem[];
+};
+
+export type RouteEntry = {
+	target: string;
+	via: string;
+	device: string;
+	table: string;
+	source: string;
+	scope: string;
+	metric: string;
+	proto: string;
+	family: "ipv4" | "ipv6";
+	isDefault: boolean;
+};
+
+export type ConntrackKillParams = {
+	protocol: string;
+	src: string;
+	dst: string;
+	sport?: number;
+	dport?: number;
+	family?: "ipv4" | "ipv6";
+};
+
+export type ConntrackKillResult = {
+	ok: boolean;
+	output?: string;
+	error?: string;
+};
+
+export type NftToggleRuleParams = {
+	table: string;
+	chain: string;
+	handle: number;
+	action?: "disable" | "delete" | "enable";
+};
+
+export type NftToggleRuleResult = {
+	ok: boolean;
+	action?: string;
+	handle?: number;
+	output?: string;
+	error?: string;
+};
+
 export type ProcessStatItem = {
 	pid: number;
 	user: string;
@@ -3235,6 +3328,42 @@ export async function flashFirmware(options: FirmwareFlashOptions): Promise<Dest
 		return {
 			accepted: false,
 			message: "Firmware flash request failed.",
+		};
+	}
+}
+
+export async function killConntrackConnection(params: ConntrackKillParams): Promise<ConntrackKillResult> {
+	try {
+		return await callBridge<ConntrackKillResult>("conntrack_kill", {
+			protocol: params.protocol,
+			src: params.src,
+			dst: params.dst,
+			sport: params.sport ?? 0,
+			dport: params.dport ?? 0,
+			family: params.family ?? "ipv4",
+		});
+	}
+	catch (e) {
+		return {
+			ok: false,
+			error: e instanceof Error ? e.message : "Failed to terminate connection",
+		};
+	}
+}
+
+export async function toggleNftRule(params: NftToggleRuleParams): Promise<NftToggleRuleResult> {
+	try {
+		return await callBridge<NftToggleRuleResult>("nft_toggle_rule", {
+			table: params.table,
+			chain: params.chain,
+			handle: params.handle,
+			action: params.action ?? "disable",
+		});
+	}
+	catch (e) {
+		return {
+			ok: false,
+			error: e instanceof Error ? e.message : "Failed to toggle nftables rule",
 		};
 	}
 }

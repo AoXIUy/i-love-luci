@@ -20,6 +20,8 @@ describe("nativePageCompatPath", () => {
 		expect(nativePageCompatPath("packages")).toBeNull();
 		expect(nativePageCompatPath("attendedsysupgrade-config")).toBeNull();
 		expect(nativePageCompatPath("status-routes")).toBeNull();
+		expect(nativePageCompatPath("firewall-status")).toBeNull();
+		expect(nativePageCompatPath("connections")).toBeNull();
 		expect(nativePageCompatPath("logs")).toBeNull();
 	});
 });
