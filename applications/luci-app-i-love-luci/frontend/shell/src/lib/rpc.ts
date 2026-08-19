@@ -1729,6 +1729,7 @@ export type NativePageData = {
 	packageAvailable?: string[];
 	packageFeeds?: PackageFeedRow[];
 	flashBackup?: FlashBackupContext;
+	conntrack?: ConntrackSummary;
 };
 
 type BridgeResponse<T> = {

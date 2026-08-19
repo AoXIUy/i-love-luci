@@ -7203,13 +7203,17 @@ function MetricBlock({ label, value }: { label: string; value: ReactNode }) {
 	);
 }
 
-function formatBytes(value?: number) {
-	if (!value || value <= 0) {
+function formatBytes(value?: number | string) {
+	if (!value) {
+		return "0 B";
+	}
+	const num = typeof value === "string" ? Number(value) : value;
+	if (isNaN(num) || num <= 0) {
 		return "0 B";
 	}
 
-	const units = ["B", "KB", "MB", "GB"];
-	let size = value;
+	const units = ["B", "KB", "MB", "GB", "TB"];
+	let size = num;
 	let unit = 0;
 
 	while (size >= 1024 && unit < units.length - 1) {
@@ -7368,33 +7372,10 @@ function RouteProtoBadge({ proto }: { proto: string }) {
 	);
 }
 
-function formatBytes(bytesStr: string): string {
-	const bytes = Number(bytesStr);
-	if (isNaN(bytes) || bytes === 0) return "0 B";
-	const units = ["B", "KB", "MB", "GB", "TB"];
-	const i = Math.floor(Math.log(bytes) / Math.log(1024));
-	const unitIndex = Math.min(i, units.length - 1);
-	return `${(bytes / Math.pow(1024, unitIndex)).toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
-}
-
 function formatPackets(pktsStr: string): string {
 	const pkts = Number(pktsStr);
 	if (isNaN(pkts)) return pktsStr || "0";
 	return pkts.toLocaleString();
-}
-
-function formatDuration(seconds: number): string {
-	if (!seconds || isNaN(seconds) || seconds < 0) return "-";
-	if (seconds < 60) return `${seconds}s`;
-	const m = Math.floor(seconds / 60);
-	const s = seconds % 60;
-	if (m < 60) return `${m}m ${s < 10 ? "0" : ""}${s}s`;
-	const h = Math.floor(m / 60);
-	const rm = m % 60;
-	if (h < 24) return `${h}h ${rm < 10 ? "0" : ""}${rm}m`;
-	const d = Math.floor(h / 24);
-	const rh = h % 24;
-	return `${d}d ${rh}h`;
 }
 
 function NftSyntaxHighlighter({ expression }: { expression: string }) {
