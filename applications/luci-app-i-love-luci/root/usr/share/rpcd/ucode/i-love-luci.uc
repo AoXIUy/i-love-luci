@@ -79,7 +79,12 @@ const nativeRoutes = {
 	'/admin/services/banip/processing_log': { status: 'supported', nativePath: '/native/service/banip/processing_log' },
 	'/admin/services/adblock-fast': { status: 'supported', nativePath: '/native/service/adblock-fast' },
 	'/admin/services/upnp': { status: 'supported', nativePath: '/native/service/upnpd' },
-	'/admin/services/uhttpd': { status: 'supported', nativePath: '/native/service/uhttpd' }
+	'/admin/services/uhttpd': { status: 'supported', nativePath: '/native/service/uhttpd' },
+	'/admin/services/passwall': { status: 'supported', nativePath: '/native/service/passwall' },
+	'/admin/services/passwall/nodes': { status: 'supported', nativePath: '/native/service/passwall/nodes' },
+	'/admin/services/passwall/subscriptions': { status: 'supported', nativePath: '/native/service/passwall/subscriptions' },
+	'/admin/services/passwall/acl': { status: 'supported', nativePath: '/native/service/passwall/acl' },
+	'/admin/services/passwall/log': { status: 'supported', nativePath: '/native/service/passwall/log' }
 };
 const servicePackages = {
 	'adblock-fast': {
@@ -109,6 +114,18 @@ const servicePackages = {
 	},
 	commands: { package: 'luci', init: null, title: 'Custom Commands', sections: ['command'] },
 	dropbear: { package: 'dropbear', init: 'dropbear', title: 'Dropbear SSH', sections: ['dropbear'], logPattern: 'dropbear' },
+	passwall: {
+		package: 'passwall',
+		init: 'passwall',
+		title: 'Passwall',
+		compatPath: '/admin/services/passwall',
+		sections: ['global', 'global_app', 'global_forwarding', 'servers', 'subscribe_list', 'acl_rule'],
+		logPattern: 'passwall',
+		files: [
+			{ title: 'Running config dir', path: '/tmp/etc/passwall' },
+			{ title: 'PID dir', path: '/var/run/passwall' }
+		]
+	},
 	uhttpd: { package: 'uhttpd', init: 'uhttpd', title: 'uHTTPd', sections: ['uhttpd', 'cert', 'cert_defaults'], logPattern: 'uhttpd' },
 	upnpd: {
 		package: 'upnpd',
@@ -10783,6 +10800,598 @@ function firmware_flash(options) {
 	};
 }
 
+function get_passwall_status() {
+	let is_installed = stat('/etc/config/passwall')?.type == 'file' || stat('/etc/init.d/passwall')?.type == 'file';
+	if (!is_installed) {
+		return {
+			installed: false,
+			enabled: false,
+			running: false,
+			coreType: 'unknown',
+			coreVersion: '',
+			pid: 0,
+			mode: '0',
+			mainNode: null,
+			nodeCount: 0,
+			subscriptionCount: 0
+		};
+	}
+
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return {
+			installed: true,
+			enabled: false,
+			running: false,
+			coreType: 'unknown',
+			coreVersion: '',
+			pid: 0,
+			mode: '0',
+			mainNode: null,
+			nodeCount: 0,
+			subscriptionCount: 0
+		};
+	}
+
+	let global_section = first_uci_section('passwall', 'global') || 'global';
+	let global_app_section = first_uci_section('passwall', 'global_app') || 'global_app';
+	let enabled = (uci.get('passwall', global_section, 'enable') || '0') == '1';
+	let main_node_sec = uci.get('passwall', global_section, 'node') || uci.get('passwall', global_section, 'tcp_node') || '';
+	let mode = uci.get('passwall', global_section, 'mode') || '4';
+
+	let mainNode = null;
+	let nodeCount = 0;
+	let subscriptionCount = 0;
+
+	uci.foreach('passwall', 'servers', function(s) {
+		nodeCount++;
+		if (main_node_sec && (s['.name'] == main_node_sec || s.remarks == main_node_sec)) {
+			mainNode = {
+				section: s['.name'] || '',
+				remarks: s.remarks || s['.name'] || '',
+				type: s.type || '',
+				address: s.address || '',
+				port: int(s.port || 0)
+			};
+		}
+	});
+
+	uci.foreach('passwall', 'subscribe_list', function(s) {
+		subscriptionCount++;
+	});
+
+	let xray_bin = uci.get('passwall', global_app_section, 'xray_file') || '/usr/bin/xray';
+	let singbox_bin = uci.get('passwall', global_app_section, 'sing_box_file') || '/usr/bin/sing-box';
+	let coreType = 'unknown';
+	let coreVersion = '';
+
+	if (stat(xray_bin)?.type == 'file') {
+		coreType = 'xray';
+		let v_out = shell_output(xray_bin + ' version 2>/dev/null | head -n 1');
+		let m = match(v_out, /Xray\s+([0-9.]+)/i);
+		if (m) coreVersion = m[1];
+		else coreVersion = trim(v_out);
+	}
+	else if (stat(singbox_bin)?.type == 'file') {
+		coreType = 'sing-box';
+		let v_out = shell_output(singbox_bin + ' version 2>/dev/null | head -n 1');
+		let m = match(v_out, /sing-box\s+version\s+([0-9.]+)/i);
+		if (m) coreVersion = m[1];
+		else coreVersion = trim(v_out);
+	}
+
+	let pids_raw = trim(shell_output('pgrep -f "xray|sing-box|passwall" 2>/dev/null | head -n 1'));
+	let pid = int(pids_raw || 0);
+	let running = pid > 0;
+
+	return {
+		installed: true,
+		enabled,
+		running,
+		coreType,
+		coreVersion: coreVersion || '1.0.0',
+		pid,
+		mode,
+		mainNode,
+		nodeCount,
+		subscriptionCount
+	};
+}
+
+function get_passwall_nodes(args) {
+	args ||= {};
+	let offset = int(args.offset || 0);
+	let limit = int(args.limit || 50);
+	let filter_type = clean_uci_value(args.filter_type || '');
+	let filter_enabled = args.filter_enabled;
+
+	let all_nodes = [];
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { nodes: [], total: 0, offset, limit };
+	}
+
+	uci.foreach('passwall', 'servers', function(s) {
+		let n_type = s.type || '';
+		let n_enabled = s.enabled == '0' ? false : true;
+
+		if (filter_type && n_type != filter_type)
+			return;
+		if (filter_enabled != null && filter_enabled != '' && n_enabled != (filter_enabled == '1' || filter_enabled == true))
+			return;
+
+		push(all_nodes, {
+			section: s['.name'] || '',
+			remarks: s.remarks || '',
+			type: s.type || '',
+			address: s.address || '',
+			port: int(s.port || 0),
+			enabled: n_enabled,
+			uuid: s.uuid || '',
+			transport: s.transport || s.network || '',
+			tls: s.tls == '1' || s.tls == 'tls' || s.tls == 'reality' || false,
+			flow: s.flow || '',
+			security: s.security || '',
+			alter_id: s.alter_id || '',
+			password: s.password || '',
+			method: s.method || s.encryption || '',
+			ss_method: s.ss_method || '',
+			ssr_method: s.ssr_method || '',
+			ssr_obfs: s.ssr_obfs || '',
+			ssr_protocol: s.ssr_protocol || '',
+			obfs: s.obfs || '',
+			sni: s.sni || s.tls_server_name || '',
+			path: s.path || s.ws_path || '',
+			host: s.host || s.ws_host || '',
+			reality_public_key: s.reality_public_key || s.reality_pk || '',
+			username: s.username || '',
+			scheme: s.scheme || '',
+			config_path: s.config_path || '',
+			version: s.version || '',
+			congestion_control: s.congestion_control || '',
+			hop_interval: s.hop_interval || '',
+			skip_cert_verify: s.skip_cert_verify == '1'
+		});
+	});
+
+	let total = length(all_nodes);
+	let paged_nodes = [];
+	for (let i = offset; i < total && i < offset + limit; i++) {
+		push(paged_nodes, all_nodes[i]);
+	}
+
+	return {
+		nodes: paged_nodes,
+		total,
+		offset,
+		limit
+	};
+}
+
+function get_passwall_node_detail(section) {
+	section = clean_uci_value(section || '');
+	if (!length(section))
+		return { error: 'Section parameter is required' };
+
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	let values = uci.get_all('passwall', section);
+	if (!values)
+		return { error: 'Node section not found' };
+
+	values.section = section;
+	return values;
+}
+
+function add_passwall_node(values) {
+	values ||= {};
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	let section = uci.add('passwall', 'servers');
+	if (!section)
+		return { error: 'Failed to allocate servers section' };
+
+	for (let k, v in values) {
+		if (k == 'section' || k == '.name' || k == '.type' || k == '.anonymous')
+			continue;
+		let val = type(v) == 'boolean' ? (v ? '1' : '0') : clean_uci_value(v);
+		if (val != '')
+			uci.set('passwall', section, k, val);
+	}
+
+	uci.commit('passwall');
+	return { ok: true, section };
+}
+
+function update_passwall_node(section, values) {
+	section = clean_uci_value(section || '');
+	values ||= {};
+	if (!length(section))
+		return { error: 'Section parameter is required' };
+
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	if (uci.get('passwall', section) != 'servers')
+		return { error: 'Node section not found' };
+
+	for (let k, v in values) {
+		if (k == 'section' || k == '.name' || k == '.type' || k == '.anonymous')
+			continue;
+		let val = type(v) == 'boolean' ? (v ? '1' : '0') : clean_uci_value(v);
+		if (val == null || val == '')
+			uci.delete('passwall', section, k);
+		else
+			uci.set('passwall', section, k, val);
+	}
+
+	uci.commit('passwall');
+	return { ok: true };
+}
+
+function delete_passwall_node(section) {
+	section = clean_uci_value(section || '');
+	if (!length(section))
+		return { error: 'Section parameter is required' };
+
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	uci.delete('passwall', section);
+	uci.commit('passwall');
+	return { ok: true };
+}
+
+function get_passwall_subscriptions() {
+	let subs = [];
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return subs;
+	}
+
+	uci.foreach('passwall', 'subscribe_list', function(s) {
+		let sec = s['.name'] || '';
+		let remarks = s.remarks || sec;
+		let node_count = 0;
+		uci.foreach('passwall', 'servers', function(node) {
+			if (node.subscribe_template == sec || (node.remarks && length(remarks) && index(node.remarks, remarks) == 0))
+				node_count++;
+		});
+
+		push(subs, {
+			section: sec,
+			remarks,
+			url: s.url || '',
+			enabled: s.enabled != '0',
+			autoUpdate: int(s.auto_update || 0),
+			lastUpdate: int(s.last_update || 0),
+			nodeCount: node_count
+		});
+	});
+
+	return subs;
+}
+
+function add_passwall_subscription(values) {
+	values ||= {};
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	let section = uci.add('passwall', 'subscribe_list');
+	for (let k, v in values) {
+		if (k == 'section' || k == '.name' || k == '.type' || k == '.anonymous')
+			continue;
+		let val = type(v) == 'boolean' ? (v ? '1' : '0') : clean_uci_value(v);
+		if (val != '')
+			uci.set('passwall', section, k, val);
+	}
+
+	uci.commit('passwall');
+	return { ok: true, section };
+}
+
+function update_passwall_subscription(section, values) {
+	section = clean_uci_value(section || '');
+	values ||= {};
+	if (!length(section))
+		return { error: 'Section parameter is required' };
+
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	for (let k, v in values) {
+		if (k == 'section' || k == '.name' || k == '.type' || k == '.anonymous')
+			continue;
+		let val = type(v) == 'boolean' ? (v ? '1' : '0') : clean_uci_value(v);
+		if (val == null || val == '')
+			uci.delete('passwall', section, k);
+		else
+			uci.set('passwall', section, k, val);
+	}
+
+	uci.commit('passwall');
+	return { ok: true };
+}
+
+function delete_passwall_subscription(section) {
+	section = clean_uci_value(section || '');
+	if (!length(section))
+		return { error: 'Section parameter is required' };
+
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	uci.delete('passwall', section);
+	uci.commit('passwall');
+	return { ok: true };
+}
+
+function trigger_passwall_sub_update(section) {
+	section = clean_uci_value(section || '');
+	let cmd = '/usr/share/passwall/subscribe.sh start &';
+	if (length(section))
+		cmd = sprintf('/usr/share/passwall/subscribe.sh update %s &', quote_command_args([section])[0]);
+
+	system(cmd + ' >/dev/null 2>&1');
+	return { ok: true, message: 'Subscription update triggered' };
+}
+
+function set_passwall_main_node(section) {
+	section = clean_uci_value(section || '');
+	if (!length(section))
+		return { error: 'Section parameter is required' };
+
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	let global_section = first_uci_section('passwall', 'global') || 'global';
+	uci.set('passwall', global_section, 'tcp_node', section);
+	uci.set('passwall', global_section, 'node', section);
+	uci.commit('passwall');
+
+	system('/etc/init.d/passwall restart >/dev/null 2>&1 &');
+	return { ok: true };
+}
+
+function toggle_passwall(enable) {
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	let global_section = first_uci_section('passwall', 'global') || 'global';
+	let val = enable ? '1' : '0';
+	uci.set('passwall', global_section, 'enable', val);
+	uci.commit('passwall');
+
+	if (enable)
+		system('/etc/init.d/passwall restart >/dev/null 2>&1 &');
+	else
+		system('/etc/init.d/passwall stop >/dev/null 2>&1 &');
+
+	return { ok: true };
+}
+
+function restart_passwall() {
+	system('/etc/init.d/passwall restart >/dev/null 2>&1 &');
+	return { ok: true };
+}
+
+function get_passwall_log(lines) {
+	lines = int(lines || 300);
+	if (lines < 10) lines = 10;
+	if (lines > 2000) lines = 2000;
+
+	let raw = shell_output(sprintf('logread 2>/dev/null | grep -i passwall | tail -n %d', lines));
+	let line_arr = split(trim(raw || ''), '\n');
+	let clean_lines = [];
+	for (let l in line_arr) {
+		let tl = trim(l);
+		if (length(tl))
+			push(clean_lines, tl);
+	}
+
+	return {
+		lines: clean_lines,
+		total: length(clean_lines)
+	};
+}
+
+function get_passwall_acl_rules() {
+	let rules = [];
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return rules;
+	}
+
+	uci.foreach('passwall', 'acl_rule', function(s) {
+		push(rules, {
+			section: s['.name'] || '',
+			remarks: s.remarks || '',
+			sources: s.sources || s.mac || s.ip || '',
+			mode: s.mode || s.tcp_proxy_mode || '',
+			node: s.node || s.tcp_node || '',
+			enabled: s.enabled != '0'
+		});
+	});
+
+	return rules;
+}
+
+function add_passwall_acl_rule(values) {
+	values ||= {};
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	let section = uci.add('passwall', 'acl_rule');
+	for (let k, v in values) {
+		if (k == 'section' || k == '.name' || k == '.type' || k == '.anonymous')
+			continue;
+		let val = type(v) == 'boolean' ? (v ? '1' : '0') : clean_uci_value(v);
+		if (val != '')
+			uci.set('passwall', section, k, val);
+	}
+
+	uci.commit('passwall');
+	return { ok: true, section };
+}
+
+function update_passwall_acl_rule(section, values) {
+	section = clean_uci_value(section || '');
+	values ||= {};
+	if (!length(section))
+		return { error: 'Section parameter is required' };
+
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	for (let k, v in values) {
+		if (k == 'section' || k == '.name' || k == '.type' || k == '.anonymous')
+			continue;
+		let val = type(v) == 'boolean' ? (v ? '1' : '0') : clean_uci_value(v);
+		if (val == null || val == '')
+			uci.delete('passwall', section, k);
+		else
+			uci.set('passwall', section, k, val);
+	}
+
+	uci.commit('passwall');
+	return { ok: true };
+}
+
+function delete_passwall_acl_rule(section) {
+	section = clean_uci_value(section || '');
+	if (!length(section))
+		return { error: 'Section parameter is required' };
+
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	uci.delete('passwall', section);
+	uci.commit('passwall');
+	return { ok: true };
+}
+
+function get_passwall_global_config() {
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { global: {}, global_app: {}, global_forwarding: {} };
+	}
+
+	let global_sec = first_uci_section('passwall', 'global') || 'global';
+	let app_sec = first_uci_section('passwall', 'global_app') || 'global_app';
+	let fwd_sec = first_uci_section('passwall', 'global_forwarding') || 'global_forwarding';
+
+	return {
+		global: uci.get_all('passwall', global_sec) || {},
+		global_app: uci.get_all('passwall', app_sec) || {},
+		global_forwarding: uci.get_all('passwall', fwd_sec) || {}
+	};
+}
+
+function update_passwall_global_config(values) {
+	values ||= {};
+	try {
+		uci.load('passwall');
+	}
+	catch (e) {
+		return { error: 'Failed to load passwall configuration' };
+	}
+
+	let global_sec = first_uci_section('passwall', 'global') || 'global';
+	let app_sec = first_uci_section('passwall', 'global_app') || 'global_app';
+	let fwd_sec = first_uci_section('passwall', 'global_forwarding') || 'global_forwarding';
+
+	if (values.global) {
+		for (let k, v in values.global) {
+			if (k == '.name' || k == '.type' || k == '.anonymous') continue;
+			let val = clean_uci_value(v);
+			if (val == '') uci.delete('passwall', global_sec, k);
+			else uci.set('passwall', global_sec, k, val);
+		}
+	}
+
+	if (values.global_app) {
+		for (let k, v in values.global_app) {
+			if (k == '.name' || k == '.type' || k == '.anonymous') continue;
+			let val = clean_uci_value(v);
+			if (val == '') uci.delete('passwall', app_sec, k);
+			else uci.set('passwall', app_sec, k, val);
+		}
+	}
+
+	if (values.global_forwarding) {
+		for (let k, v in values.global_forwarding) {
+			if (k == '.name' || k == '.type' || k == '.anonymous') continue;
+			let val = clean_uci_value(v);
+			if (val == '') uci.delete('passwall', fwd_sec, k);
+			else uci.set('passwall', fwd_sec, k, val);
+		}
+	}
+
+	uci.commit('passwall');
+	system('/etc/init.d/passwall restart >/dev/null 2>&1 &');
+	return { ok: true };
+}
+
 function native_page(page) {
 	const board = ubus.call('system', 'board') || {};
 	const system_info = ubus.call('system', 'info') || {};
@@ -12794,6 +13403,202 @@ const methods = {
 			return respond({
 				verified: false
 			});
+		}
+	},
+
+	passwall_status: {
+		call: function() {
+			return respond(get_passwall_status());
+		}
+	},
+
+	passwall_list_nodes: {
+		args: {
+			offset: 0,
+			limit: 50,
+			filter_type: '',
+			filter_enabled: ''
+		},
+		call: function(request) {
+			return respond(get_passwall_nodes(request.args || {}));
+		}
+	},
+
+	passwall_node_detail: {
+		args: {
+			section: ''
+		},
+		call: function(request) {
+			let res = get_passwall_node_detail(request.args.section || '');
+			return respond(res);
+		}
+	},
+
+	passwall_update_node: {
+		args: {
+			section: '',
+			values: {}
+		},
+		call: function(request) {
+			let res = update_passwall_node(request.args.section || '', request.args.values || {});
+			return respond(res);
+		}
+	},
+
+	passwall_delete_node: {
+		args: {
+			section: ''
+		},
+		call: function(request) {
+			let res = delete_passwall_node(request.args.section || '');
+			return respond(res);
+		}
+	},
+
+	passwall_add_node: {
+		args: {
+			values: {}
+		},
+		call: function(request) {
+			let res = add_passwall_node(request.args.values || {});
+			return respond(res);
+		}
+	},
+
+	passwall_list_subscriptions: {
+		call: function() {
+			return respond(get_passwall_subscriptions());
+		}
+	},
+
+	passwall_update_subscription: {
+		args: {
+			section: '',
+			values: {}
+		},
+		call: function(request) {
+			let res = update_passwall_subscription(request.args.section || '', request.args.values || {});
+			return respond(res);
+		}
+	},
+
+	passwall_delete_subscription: {
+		args: {
+			section: ''
+		},
+		call: function(request) {
+			let res = delete_passwall_subscription(request.args.section || '');
+			return respond(res);
+		}
+	},
+
+	passwall_add_subscription: {
+		args: {
+			values: {}
+		},
+		call: function(request) {
+			let res = add_passwall_subscription(request.args.values || {});
+			return respond(res);
+		}
+	},
+
+	passwall_update_sub: {
+		args: {
+			section: ''
+		},
+		call: function(request) {
+			let res = trigger_passwall_sub_update(request.args.section || '');
+			return respond(res);
+		}
+	},
+
+	passwall_set_main_node: {
+		args: {
+			section: ''
+		},
+		call: function(request) {
+			let res = set_passwall_main_node(request.args.section || '');
+			return respond(res);
+		}
+	},
+
+	passwall_toggle: {
+		args: {
+			enable: true
+		},
+		call: function(request) {
+			let res = toggle_passwall(!!request.args.enable);
+			return respond(res);
+		}
+	},
+
+	passwall_restart: {
+		call: function() {
+			let res = restart_passwall();
+			return respond(res);
+		}
+	},
+
+	passwall_get_log: {
+		args: {
+			lines: 300
+		},
+		call: function(request) {
+			let res = get_passwall_log(request.args.lines || 300);
+			return respond(res);
+		}
+	},
+
+	passwall_list_acl: {
+		call: function() {
+			return respond(get_passwall_acl_rules());
+		}
+	},
+
+	passwall_update_acl: {
+		args: {
+			section: '',
+			values: {}
+		},
+		call: function(request) {
+			let res = update_passwall_acl_rule(request.args.section || '', request.args.values || {});
+			return respond(res);
+		}
+	},
+
+	passwall_delete_acl: {
+		args: {
+			section: ''
+		},
+		call: function(request) {
+			let res = delete_passwall_acl_rule(request.args.section || '');
+			return respond(res);
+		}
+	},
+
+	passwall_add_acl: {
+		args: {
+			values: {}
+		},
+		call: function(request) {
+			let res = add_passwall_acl_rule(request.args.values || {});
+			return respond(res);
+		}
+	},
+
+	passwall_get_config: {
+		call: function() {
+			return respond(get_passwall_global_config());
+		}
+	},
+
+	passwall_update_config: {
+		args: {
+			values: {}
+		},
+		call: function(request) {
+			let res = update_passwall_global_config(request.args.values || {});
+			return respond(res);
 		}
 	}
 };

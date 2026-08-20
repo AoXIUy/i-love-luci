@@ -10,6 +10,8 @@ describe("serviceCompatPath", () => {
 		expect(serviceCompatPath("uhttpd")).toBeNull();
 		expect(serviceCompatPath("upnpd")).toBeNull();
 		expect(serviceCompatPath("commands")).toBeNull();
+		expect(serviceCompatPath("passwall")).toBeNull();
+		expect(serviceCompatPath("passwall", "nodes")).toBeNull();
 	});
 });
 

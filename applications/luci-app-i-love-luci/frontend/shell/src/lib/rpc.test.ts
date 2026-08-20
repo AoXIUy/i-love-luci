@@ -1,17 +1,38 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+	addPasswallAclRule,
+	addPasswallNode,
+	addPasswallSubscription,
+	deletePasswallAclRule,
+	deletePasswallNode,
+	deletePasswallSubscription,
 	getConntrackSummary,
 	getDashboardStatus,
 	getDeviceList,
 	getInterfaceDetail,
 	getNetworkProtocols,
+	getPasswallAclRules,
+	getPasswallGlobalConfig,
+	getPasswallLog,
+	getPasswallNodeDetail,
+	getPasswallNodes,
+	getPasswallStatus,
+	getPasswallSubscriptions,
 	getProcessStats,
 	getThermalHistory,
 	killConntrackConnection,
 	probeAuthSession,
+	restartPasswall,
 	runNetworkInterfaceAction,
+	setPasswallMainNode,
 	toggleNftRule,
+	togglePasswall,
+	triggerPasswallSubUpdate,
+	updatePasswallAclRule,
+	updatePasswallGlobalConfig,
+	updatePasswallNode,
+	updatePasswallSubscription,
 	validateInterfaceConfig,
 } from "@/lib/rpc";
 
@@ -498,6 +519,349 @@ describe("toggleNftRule", () => {
 
 		expect(res.ok).toBe(false);
 		expect(res.error).toBeDefined();
+	});
+});
+
+describe("Passwall RPC", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("fetches passwall status successfully", async () => {
+		stubBrowser("session-123");
+		const statusPayload = {
+			installed: true,
+			enabled: true,
+			running: true,
+			coreType: "xray",
+			coreVersion: "1.8.4",
+			pid: 1234,
+			mode: "4",
+			mainNode: {
+				section: "cfg01",
+				remarks: "HK Node",
+				type: "vless",
+				address: "1.1.1.1",
+				port: 443,
+			},
+			nodeCount: 10,
+			subscriptionCount: 2,
+		};
+
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [0, { ok: true, data: statusPayload }],
+				}),
+			),
+		);
+
+		const res = await getPasswallStatus();
+		expect(res.installed).toBe(true);
+		expect(res.enabled).toBe(true);
+		expect(res.running).toBe(true);
+		expect(res.coreType).toBe("xray");
+		expect(res.mainNode?.remarks).toBe("HK Node");
+		expect(res.nodeCount).toBe(10);
+	});
+
+	it("returns fallback status when RPC fails", async () => {
+		stubBrowser("session-123");
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("RPC network error")));
+
+		const res = await getPasswallStatus();
+		expect(res.installed).toBe(false);
+		expect(res.enabled).toBe(false);
+		expect(res.running).toBe(false);
+	});
+
+	it("fetches and filters passwall nodes", async () => {
+		stubBrowser("session-123");
+		const nodesPayload = {
+			nodes: [
+				{
+					section: "node1",
+					remarks: "Node 1",
+					type: "vmess",
+					address: "node1.example.com",
+					port: 443,
+					enabled: true,
+				},
+				{
+					section: "node2",
+					remarks: "Node 2",
+					type: "vless",
+					address: "node2.example.com",
+					port: 443,
+					enabled: false,
+				},
+			],
+			total: 2,
+			offset: 0,
+			limit: 50,
+		};
+
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [0, { ok: true, data: nodesPayload }],
+				}),
+			),
+		);
+
+		const res = await getPasswallNodes({ limit: 10 });
+		expect(res.total).toBe(2);
+		expect(res.nodes.length).toBe(2);
+		expect(res.nodes[0].remarks).toBe("Node 1");
+	});
+
+	it("fetches single node detail", async () => {
+		stubBrowser("session-123");
+		const nodeDetail = {
+			section: "node1",
+			remarks: "HK Node",
+			type: "vless",
+			address: "example.com",
+			port: 443,
+			uuid: "abc-123",
+			transport: "ws",
+			tls: true,
+		};
+
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [0, { ok: true, data: nodeDetail }],
+				}),
+			),
+		);
+
+		const res = await getPasswallNodeDetail("node1");
+		expect(res.remarks).toBe("HK Node");
+		expect(res.uuid).toBe("abc-123");
+	});
+
+	it("adds, updates and deletes a node", async () => {
+		stubBrowser("session-123");
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true, section: "new_node" } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const addRes = await addPasswallNode({ remarks: "New Node", type: "vmess", address: "1.2.3.4", port: 443 });
+		expect(addRes.ok).toBe(true);
+		expect(addRes.section).toBe("new_node");
+
+		const updateRes = await updatePasswallNode("new_node", { remarks: "Updated Node" });
+		expect(updateRes.ok).toBe(true);
+
+		const deleteRes = await deletePasswallNode("new_node");
+		expect(deleteRes.ok).toBe(true);
+	});
+
+	it("manages subscriptions and triggers update", async () => {
+		stubBrowser("session-123");
+		const subs = [
+			{
+				section: "sub1",
+				remarks: "Sub 1",
+				url: "https://example.com/sub",
+				enabled: true,
+				autoUpdate: 24,
+				lastUpdate: 1600000000,
+				nodeCount: 5,
+			},
+		];
+
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: subs }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true, section: "sub2" } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true, message: "Subscription update triggered" } }],
+				}),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const listRes = await getPasswallSubscriptions();
+		expect(listRes.length).toBe(1);
+		expect(listRes[0].remarks).toBe("Sub 1");
+
+		const addRes = await addPasswallSubscription({ remarks: "Sub 2", url: "https://example.com/sub2" });
+		expect(addRes.ok).toBe(true);
+
+		const updateRes = await updatePasswallSubscription("sub2", { autoUpdate: 12 });
+		expect(updateRes.ok).toBe(true);
+
+		const delRes = await deletePasswallSubscription("sub2");
+		expect(delRes.ok).toBe(true);
+
+		const triggerRes = await triggerPasswallSubUpdate("sub1");
+		expect(triggerRes.ok).toBe(true);
+	});
+
+	it("controls passwall service: set main node, toggle and restart", async () => {
+		stubBrowser("session-123");
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const setMainRes = await setPasswallMainNode("node1");
+		expect(setMainRes.ok).toBe(true);
+
+		const toggleRes = await togglePasswall(true);
+		expect(toggleRes.ok).toBe(true);
+
+		const restartRes = await restartPasswall();
+		expect(restartRes.ok).toBe(true);
+	});
+
+	it("queries passwall logs", async () => {
+		stubBrowser("session-123");
+		const logPayload = {
+			lines: ["[2026-08-20 10:00:00] Passwall started", "[2026-08-20 10:00:01] Core Xray running"],
+			total: 2,
+		};
+
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue(
+				jsonResponse({
+					result: [0, { ok: true, data: logPayload }],
+				}),
+			),
+		);
+
+		const res = await getPasswallLog(100);
+		expect(res.lines.length).toBe(2);
+		expect(res.lines[0]).toContain("Passwall started");
+	});
+
+	it("manages ACL rules", async () => {
+		stubBrowser("session-123");
+		const aclList = [
+			{
+				section: "rule1",
+				remarks: "TV",
+				sources: "192.168.1.50",
+				mode: "0",
+				node: "node1",
+				enabled: true,
+			},
+		];
+
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: aclList }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true, section: "rule2" } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const listRes = await getPasswallAclRules();
+		expect(listRes.length).toBe(1);
+		expect(listRes[0].remarks).toBe("TV");
+
+		const addRes = await addPasswallAclRule({ remarks: "PC", sources: "192.168.1.100", mode: "4" });
+		expect(addRes.ok).toBe(true);
+
+		const updateRes = await updatePasswallAclRule("rule2", { enabled: false });
+		expect(updateRes.ok).toBe(true);
+
+		const delRes = await deletePasswallAclRule("rule2");
+		expect(delRes.ok).toBe(true);
+	});
+
+	it("manages global config", async () => {
+		stubBrowser("session-123");
+		const configData = {
+			global: { enable: "1", mode: "4", socks_port: "1080" },
+			global_app: { xray_file: "/usr/bin/xray", sing_box_file: "/usr/bin/sing-box" },
+			global_forwarding: { tcp_port: "1041", udp_port: "1041" },
+		};
+
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: configData }],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					result: [0, { ok: true, data: { ok: true } }],
+				}),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const getRes = await getPasswallGlobalConfig();
+		expect(getRes.global.enable).toBe("1");
+		expect(getRes.global_app.xray_file).toBe("/usr/bin/xray");
+
+		const updateRes = await updatePasswallGlobalConfig({ global: { mode: "0" } });
+		expect(updateRes.ok).toBe(true);
 	});
 });
 

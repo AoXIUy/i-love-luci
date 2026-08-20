@@ -1732,6 +1732,111 @@ export type NativePageData = {
 	conntrack?: ConntrackSummary;
 };
 
+export type PasswallProtocol =
+	| "vmess"
+	| "vless"
+	| "trojan"
+	| "shadowsocks"
+	| "shadowsocksr"
+	| "hysteria2"
+	| "tuic"
+	| "naiveproxy"
+	| "socks5"
+	| "http"
+	| "sing-box";
+
+export type PasswallNode = {
+	section: string;
+	remarks?: string;
+	type?: PasswallProtocol;
+	address?: string;
+	port?: number;
+	enabled?: boolean;
+	uuid?: string;
+	transport?: string;
+	tls?: boolean;
+	flow?: string;
+	security?: string;
+	alter_id?: string;
+	password?: string;
+	method?: string;
+	ss_method?: string;
+	ssr_method?: string;
+	ssr_obfs?: string;
+	ssr_protocol?: string;
+	obfs?: string;
+	sni?: string;
+	path?: string;
+	host?: string;
+	reality_public_key?: string;
+	username?: string;
+	scheme?: string;
+	config_path?: string;
+	version?: string;
+	congestion_control?: string;
+	hop_interval?: string;
+	skip_cert_verify?: boolean;
+	[key: string]: string | number | boolean | undefined;
+};
+
+export type PasswallSubscription = {
+	section: string;
+	remarks?: string;
+	url?: string;
+	enabled?: boolean;
+	autoUpdate?: number;
+	lastUpdate?: number;
+	nodeCount?: number;
+};
+
+export type PasswallMainNode = {
+	section: string;
+	remarks?: string;
+	type?: string;
+	address?: string;
+	port?: number;
+};
+
+export type PasswallStatus = {
+	installed: boolean;
+	enabled?: boolean;
+	coreType?: "xray" | "sing-box" | "unknown";
+	coreVersion?: string;
+	running?: boolean;
+	pid?: number;
+	mode?: string;
+	mainNode?: PasswallMainNode | null;
+	nodeCount?: number;
+	subscriptionCount?: number;
+};
+
+export type PasswallNodesResult = {
+	nodes: PasswallNode[];
+	total: number;
+	offset: number;
+	limit: number;
+};
+
+export type PasswallAclRule = {
+	section: string;
+	remarks?: string;
+	sources?: string;
+	mode?: string;
+	node?: string;
+	enabled?: boolean;
+};
+
+export type PasswallGlobalConfig = {
+	global: Record<string, string>;
+	global_app: Record<string, string>;
+	global_forwarding: Record<string, string>;
+};
+
+export type PasswallLogResult = {
+	lines: string[];
+	total: number;
+};
+
 type BridgeResponse<T> = {
 	ok: boolean;
 	data: T;
@@ -3368,3 +3473,214 @@ export async function toggleNftRule(params: NftToggleRuleParams): Promise<NftTog
 		};
 	}
 }
+
+export async function getPasswallStatus(): Promise<PasswallStatus> {
+	try {
+		return await callBridge<PasswallStatus>("passwall_status");
+	}
+	catch {
+		return {
+			installed: false,
+			enabled: false,
+			running: false,
+			coreType: "unknown",
+			coreVersion: "",
+			pid: 0,
+			mode: "0",
+			mainNode: null,
+			nodeCount: 0,
+			subscriptionCount: 0,
+		};
+	}
+}
+
+export async function getPasswallNodes(params?: {
+	offset?: number;
+	limit?: number;
+	filter_type?: string;
+	filter_enabled?: string | boolean;
+}): Promise<PasswallNodesResult> {
+	try {
+		return await callBridge<PasswallNodesResult>("passwall_list_nodes", params ?? {});
+	}
+	catch {
+		return {
+			nodes: [],
+			total: 0,
+			offset: params?.offset ?? 0,
+			limit: params?.limit ?? 50,
+		};
+	}
+}
+
+export async function getPasswallNodeDetail(section: string): Promise<PasswallNode> {
+	try {
+		return await callBridge<PasswallNode>("passwall_node_detail", { section });
+	}
+	catch {
+		return { section };
+	}
+}
+
+export async function addPasswallNode(values: Partial<PasswallNode>): Promise<{ ok: boolean; section?: string }> {
+	try {
+		return await callBridge<{ ok: boolean; section?: string }>("passwall_add_node", { values });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function updatePasswallNode(section: string, values: Partial<PasswallNode>): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_update_node", { section, values });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function deletePasswallNode(section: string): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_delete_node", { section });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function getPasswallSubscriptions(): Promise<PasswallSubscription[]> {
+	try {
+		return await callBridge<PasswallSubscription[]>("passwall_list_subscriptions");
+	}
+	catch {
+		return [];
+	}
+}
+
+export async function addPasswallSubscription(values: Partial<PasswallSubscription>): Promise<{ ok: boolean; section?: string }> {
+	try {
+		return await callBridge<{ ok: boolean; section?: string }>("passwall_add_subscription", { values });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function updatePasswallSubscription(section: string, values: Partial<PasswallSubscription>): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_update_subscription", { section, values });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function deletePasswallSubscription(section: string): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_delete_subscription", { section });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function triggerPasswallSubUpdate(section?: string): Promise<{ ok: boolean; message?: string }> {
+	try {
+		return await callBridge<{ ok: boolean; message?: string }>("passwall_update_sub", { section: section ?? "" });
+	}
+	catch {
+		return { ok: false, message: "Failed to trigger subscription update" };
+	}
+}
+
+export async function setPasswallMainNode(section: string): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_set_main_node", { section });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function togglePasswall(enable: boolean): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_toggle", { enable });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function restartPasswall(): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_restart");
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function getPasswallLog(lines = 300): Promise<PasswallLogResult> {
+	try {
+		return await callBridge<PasswallLogResult>("passwall_get_log", { lines });
+	}
+	catch {
+		return { lines: [], total: 0 };
+	}
+}
+
+export async function getPasswallAclRules(): Promise<PasswallAclRule[]> {
+	try {
+		return await callBridge<PasswallAclRule[]>("passwall_list_acl");
+	}
+	catch {
+		return [];
+	}
+}
+
+export async function addPasswallAclRule(values: Partial<PasswallAclRule>): Promise<{ ok: boolean; section?: string }> {
+	try {
+		return await callBridge<{ ok: boolean; section?: string }>("passwall_add_acl", { values });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function updatePasswallAclRule(section: string, values: Partial<PasswallAclRule>): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_update_acl", { section, values });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function deletePasswallAclRule(section: string): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_delete_acl", { section });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+
+export async function getPasswallGlobalConfig(): Promise<PasswallGlobalConfig> {
+	try {
+		return await callBridge<PasswallGlobalConfig>("passwall_get_config");
+	}
+	catch {
+		return { global: {}, global_app: {}, global_forwarding: {} };
+	}
+}
+
+export async function updatePasswallGlobalConfig(values: Partial<PasswallGlobalConfig>): Promise<{ ok: boolean }> {
+	try {
+		return await callBridge<{ ok: boolean }>("passwall_update_config", { values });
+	}
+	catch {
+		return { ok: false };
+	}
+}
+

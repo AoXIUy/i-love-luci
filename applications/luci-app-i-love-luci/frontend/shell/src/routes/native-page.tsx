@@ -1,5 +1,5 @@
 import { Activity, AlertTriangle, ArrowDown, ArrowUp, Ban, CheckCircle2, ChevronDown, ChevronRight, Download, ExternalLink, FileSpreadsheet, FileText, Filter, Loader2, Play, Plus, Power, RefreshCw, Search, Shield, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -54,6 +54,27 @@ import {
 	setRouterPassword,
 	startAttendedSysupgradeJob,
 	startPackageJob,
+	getPasswallStatus,
+	getPasswallNodes,
+	getPasswallNodeDetail,
+	addPasswallNode,
+	updatePasswallNode,
+	deletePasswallNode,
+	getPasswallSubscriptions,
+	addPasswallSubscription,
+	updatePasswallSubscription,
+	deletePasswallSubscription,
+	triggerPasswallSubUpdate,
+	setPasswallMainNode,
+	togglePasswall,
+	restartPasswall,
+	getPasswallLog,
+	getPasswallAclRules,
+	addPasswallAclRule,
+	updatePasswallAclRule,
+	deletePasswallAclRule,
+	getPasswallGlobalConfig,
+	updatePasswallGlobalConfig,
 	type AdblockFastConfigInput,
 	type AdblockFastFeed,
 	type AttendedSysupgradeConfigInput,
@@ -82,6 +103,12 @@ import {
 	type PackageFileStageResult,
 	type PackageI18nSuggestionResult,
 	type PackageSearchResult,
+	type PasswallStatus,
+	type PasswallNode,
+	type PasswallSubscription,
+	type PasswallAclRule,
+	type PasswallGlobalConfig,
+	type PasswallProtocol,
 	type RestoreBackupValidationResult,
 	type ServiceFile,
 	type UpnpdConfigInput,
@@ -485,6 +512,14 @@ export function NativeServicePage() {
 
 	if (compatPath) {
 		return <Navigate replace to={legacyTarget(compatPath)} />;
+	}
+
+	if (service === "passwall") {
+		return (
+			<div className="mx-auto grid w-full max-w-7xl gap-5">
+				<PasswallPanel initialFocus={focus} />
+			</div>
+		);
 	}
 
 	return (
@@ -1365,6 +1400,10 @@ function ServiceSpecificSummary({ service }: { service: NativeService }) {
 				<UhttpdAccessPanel cert={cert} configs={configs} />
 			</div>
 		);
+	}
+
+	if (service.id === "passwall") {
+		return <PasswallPanel />;
 	}
 
 	return null;
@@ -3079,6 +3118,1933 @@ function normalizeUpnpdRule(rule: UpnpdRule): UpnpdRule {
 		int_ports: rule.int_ports || "",
 		comment: rule.comment || "",
 	};
+}
+
+// ─── Passwall 代理墙原生集成 ──────────────────────────────────────────────────
+
+const PASSWALL_PROTOCOLS: { label: string; value: PasswallProtocol }[] = [
+	{ label: "VMess", value: "vmess" },
+	{ label: "VLESS", value: "vless" },
+	{ label: "Trojan", value: "trojan" },
+	{ label: "Shadowsocks", value: "shadowsocks" },
+	{ label: "ShadowsocksR", value: "shadowsocksr" },
+	{ label: "Hysteria 2", value: "hysteria2" },
+	{ label: "TUIC", value: "tuic" },
+	{ label: "NaiveProxy", value: "naiveproxy" },
+	{ label: "SOCKS5", value: "socks5" },
+	{ label: "HTTP(S)", value: "http" },
+	{ label: "Sing-box", value: "sing-box" },
+];
+
+function PasswallPanel({ initialFocus }: { initialFocus?: string }) {
+	const [activeTab, setActiveTab] = useState<"overview" | "nodes" | "subscriptions" | "acl" | "settings" | "logs">(() => {
+		if (initialFocus === "nodes") return "nodes";
+		if (initialFocus === "subscriptions") return "subscriptions";
+		if (initialFocus === "acl") return "acl";
+		if (initialFocus === "settings") return "settings";
+		if (initialFocus === "log" || initialFocus === "logs") return "logs";
+		return "overview";
+	});
+
+	const [status, setStatus] = useState<PasswallStatus | null>(null);
+	const [loading, setLoading] = useState(true);
+
+	const fetchStatus = async () => {
+		try {
+			const data = await getPasswallStatus();
+			setStatus(data);
+		}
+		catch {
+			// ignore
+		}
+		finally {
+			setLoading(false);
+		}
+	};
+
+	useEffect(() => {
+		void fetchStatus();
+		const timer = window.setInterval(() => {
+			void fetchStatus();
+		}, 10000);
+		return () => window.clearInterval(timer);
+	}, []);
+
+	const tabs = [
+		{ id: "overview", label: t("Overview"), icon: Shield },
+		{ id: "nodes", label: t("Nodes"), icon: Activity },
+		{ id: "subscriptions", label: t("Subscriptions"), icon: FileSpreadsheet },
+		{ id: "acl", label: t("Access Control"), icon: Filter },
+		{ id: "settings", label: t("Global Settings"), icon: Activity },
+		{ id: "logs", label: t("Passwall Logs"), icon: FileText },
+	] as const;
+
+	return (
+		<div className="grid gap-5">
+			<div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+				<div className="flex items-center gap-2">
+					<Shield className="size-6 text-primary" />
+					<div>
+						<h1 className="text-xl font-bold tracking-tight">{t("Passwall")}</h1>
+						<p className="text-xs text-muted-foreground">{t("Router shell configuration and security options.")}</p>
+					</div>
+				</div>
+				<div className="flex flex-wrap gap-1 rounded-lg border bg-muted p-1">
+					{tabs.map((tab) => {
+						const Icon = tab.icon;
+						const isActive = activeTab === tab.id;
+						return (
+							<button
+								key={tab.id}
+								type="button"
+								onClick={() => setActiveTab(tab.id)}
+								className={cn(
+									"inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer",
+									isActive ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:bg-background/50 hover:text-foreground",
+								)}
+							>
+								<Icon className="size-3.5" />
+								{tab.label}
+							</button>
+						);
+					})}
+				</div>
+			</div>
+
+			{activeTab === "overview" && <PasswallOverviewTab status={status} onRefresh={fetchStatus} />}
+			{activeTab === "nodes" && <PasswallNodesTab onStatusChange={fetchStatus} />}
+			{activeTab === "subscriptions" && <PasswallSubscriptionsTab onStatusChange={fetchStatus} />}
+			{activeTab === "acl" && <PasswallAclTab />}
+			{activeTab === "settings" && <PasswallSettingsTab onSaved={fetchStatus} />}
+			{activeTab === "logs" && <PasswallLogsTab />}
+		</div>
+	);
+}
+
+function PasswallOverviewTab({ status, onRefresh }: { status: PasswallStatus | null; onRefresh: () => void }) {
+	const [nodes, setNodes] = useState<PasswallNode[]>([]);
+	const [toggling, setToggling] = useState(false);
+	const [restarting, setRestarting] = useState(false);
+	const [switchingNode, setSwitchingNode] = useState(false);
+	const [changingMode, setChangingMode] = useState(false);
+
+	useEffect(() => {
+		let cancelled = false;
+		void getPasswallNodes({ limit: 200 }).then((res) => {
+			if (!cancelled) {
+				setNodes(res.nodes);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	async function handleToggle() {
+		if (!status) return;
+		const nextState = !status.enabled;
+		setToggling(true);
+		try {
+			const res = await togglePasswall(nextState);
+			if (res.ok) {
+				toast.success(nextState ? t("Activate passwall") : t("Deactivate passwall"));
+				onRefresh();
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+		finally {
+			setToggling(false);
+		}
+	}
+
+	async function handleRestart() {
+		setRestarting(true);
+		try {
+			const res = await restartPasswall();
+			if (res.ok) {
+				toast.success(t("Passwall restarted"));
+				onRefresh();
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+		finally {
+			setRestarting(false);
+		}
+	}
+
+	async function handleSwitchNode(section: string) {
+		if (!section) return;
+		setSwitchingNode(true);
+		try {
+			const res = await setPasswallMainNode(section);
+			if (res.ok) {
+				toast.success(t("Main node updated"));
+				onRefresh();
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+		finally {
+			setSwitchingNode(false);
+		}
+	}
+
+	async function handleModeChange(mode: string) {
+		setChangingMode(true);
+		try {
+			const res = await updatePasswallGlobalConfig({ global: { mode } });
+			if (res.ok) {
+				toast.success(t("Settings saved successfully"));
+				onRefresh();
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+		finally {
+			setChangingMode(false);
+		}
+	}
+
+	const isRunning = Boolean(status?.running && status?.enabled);
+	const modeLabel = status?.mode === "0" ? t("Global proxy") : status?.mode === "1" ? t("Direct") : t("Bypass mainland China");
+
+	return (
+		<div className="grid gap-5">
+			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+				<div className="rounded-lg border bg-card p-4 shadow-xs">
+					<div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+						<span>{t("Passwall Status")}</span>
+						<Badge className={isRunning ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium" : "bg-muted text-muted-foreground"}>
+							{isRunning ? t("Running") : status?.enabled ? t("Stopped") : t("Disabled")}
+						</Badge>
+					</div>
+					<div className="text-lg font-bold">
+						{status?.enabled ? (isRunning ? t("Active") : t("Stopped")) : t("Disabled")}
+					</div>
+					<div className="text-xs text-muted-foreground mt-1">
+						{status?.pid ? `${t("Running PID")}: ${status.pid}` : t("Idle")}
+					</div>
+				</div>
+
+				<div className="rounded-lg border bg-card p-4 shadow-xs">
+					<div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+						<span>{t("Active Main Node")}</span>
+						{status?.mainNode?.type && (
+							<Badge variant="outline" className="text-[10px] uppercase font-mono">
+								{status.mainNode.type}
+							</Badge>
+						)}
+					</div>
+					<div className="text-lg font-bold truncate" title={status?.mainNode?.remarks || t("None")}>
+						{status?.mainNode?.remarks || t("None")}
+					</div>
+					<div className="text-xs font-mono text-muted-foreground truncate mt-1">
+						{status?.mainNode?.address ? `${status.mainNode.address}:${status.mainNode.port}` : "—"}
+					</div>
+				</div>
+
+				<div className="rounded-lg border bg-card p-4 shadow-xs">
+					<div className="text-xs text-muted-foreground mb-1">{t("Core Type")}</div>
+					<div className="text-lg font-bold flex items-center gap-2 capitalize">
+						{status?.coreType || "Xray"}
+						{status?.coreVersion && (
+							<span className="text-xs font-mono font-normal text-muted-foreground">v{status.coreVersion}</span>
+						)}
+					</div>
+					<div className="text-xs text-muted-foreground mt-1">
+						{status?.coreType === "sing-box" ? "Sing-box core" : "Xray-core"}
+					</div>
+				</div>
+
+				<div className="rounded-lg border bg-card p-4 shadow-xs">
+					<div className="text-xs text-muted-foreground mb-1">{t("Proxy Mode")}</div>
+					<div className="text-lg font-bold">{modeLabel}</div>
+					<div className="text-xs text-muted-foreground mt-1">
+						{status?.nodeCount ?? 0} {t("Nodes")} · {status?.subscriptionCount ?? 0} {t("Subscriptions")}
+					</div>
+				</div>
+			</div>
+
+			<Panel title={t("Quick Controls")}>
+				<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+					<div className="grid gap-1.5">
+						<label className="text-xs font-medium text-muted-foreground">{t("Service State")}</label>
+						<div className="flex gap-2">
+							<Button
+								size="sm"
+								className="w-full"
+								variant={status?.enabled ? "outline" : "default"}
+								disabled={toggling}
+								onClick={() => void handleToggle()}
+							>
+								{toggling ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Power className="mr-1.5 size-3.5" />}
+								{status?.enabled ? t("Deactivate passwall") : t("Activate passwall")}
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								disabled={restarting || !status?.enabled}
+								onClick={() => void handleRestart()}
+							>
+								{restarting ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+							</Button>
+						</div>
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="text-xs font-medium text-muted-foreground">{t("Switch Main Node")}</label>
+						<select
+							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+							value={status?.mainNode?.section || ""}
+							disabled={switchingNode || nodes.length === 0}
+							onChange={(e) => void handleSwitchNode(e.target.value)}
+						>
+							<option value="">{t("Select node")}...</option>
+							{nodes.map((n) => (
+								<option key={n.section} value={n.section}>
+									{n.remarks || n.section} ({n.type || "node"})
+								</option>
+							))}
+						</select>
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="text-xs font-medium text-muted-foreground">{t("Proxy Mode")}</label>
+						<select
+							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+							value={status?.mode || "4"}
+							disabled={changingMode}
+							onChange={(e) => void handleModeChange(e.target.value)}
+						>
+							<option value="4">{t("Bypass mainland China")}</option>
+							<option value="0">{t("Global proxy")}</option>
+							<option value="1">{t("Direct")}</option>
+						</select>
+					</div>
+
+					<div className="flex items-end">
+						<Button size="sm" variant="secondary" className="w-full" onClick={onRefresh}>
+							<RefreshCw className="mr-1.5 size-3.5" />
+							{t("Refresh")}
+						</Button>
+					</div>
+				</div>
+			</Panel>
+		</div>
+	);
+}
+
+function PasswallNodesTab({ onStatusChange }: { onStatusChange?: () => void }) {
+	const [nodes, setNodes] = useState<PasswallNode[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [search, setSearch] = useState("");
+	const [filterProtocol, setFilterProtocol] = useState("all");
+	const [filterEnabled, setFilterEnabled] = useState("all");
+	const [selected, setSelected] = useState<Set<string>>(new Set());
+	const [editingNode, setEditingNode] = useState<PasswallNode | null>(null);
+	const [dialogOpen, setDialogOpen] = useState(false);
+	const [deleting, setDeleting] = useState(false);
+
+	const fetchNodes = async () => {
+		setLoading(true);
+		try {
+			const res = await getPasswallNodes({ limit: 500 });
+			setNodes(res.nodes);
+		}
+		catch {
+			toast.error(t("Failed to load data"));
+		}
+		finally {
+			setLoading(false);
+		}
+	};
+
+	useEffect(() => {
+		void fetchNodes();
+	}, []);
+
+	const filteredNodes = useMemo(() => {
+		return nodes.filter((n) => {
+			if (search) {
+				const q = search.toLowerCase();
+				const matchRemarks = n.remarks?.toLowerCase().includes(q);
+				const matchAddr = n.address?.toLowerCase().includes(q);
+				if (!matchRemarks && !matchAddr) return false;
+			}
+			if (filterProtocol !== "all" && n.type !== filterProtocol) {
+				return false;
+			}
+			if (filterEnabled === "enabled" && n.enabled === false) {
+				return false;
+			}
+			if (filterEnabled === "disabled" && n.enabled !== false) {
+				return false;
+			}
+			return true;
+		});
+	}, [nodes, search, filterProtocol, filterEnabled]);
+
+	const toggleSelectAll = () => {
+		if (selected.size === filteredNodes.length) {
+			setSelected(new Set());
+		}
+		else {
+			setSelected(new Set(filteredNodes.map((n) => n.section)));
+		}
+	};
+
+	const toggleSelect = (section: string) => {
+		setSelected((prev) => {
+			const next = new Set(prev);
+			if (next.has(section)) next.delete(section);
+			else next.add(section);
+			return next;
+		});
+	};
+
+	async function handleDelete(section: string) {
+		if (!window.confirm(t("Are you sure you want to delete this interface?"))) {
+			return;
+		}
+		try {
+			const res = await deletePasswallNode(section);
+			if (res.ok) {
+				toast.success(t("Node deleted successfully"));
+				void fetchNodes();
+				onStatusChange?.();
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+	}
+
+	async function handleBatchDelete() {
+		if (selected.size === 0) return;
+		if (!window.confirm(`${t("Batch Delete")} ${selected.size} ${t("Nodes")}?`)) {
+			return;
+		}
+		setDeleting(true);
+		try {
+			for (const sec of selected) {
+				await deletePasswallNode(sec);
+			}
+			toast.success(t("Node deleted successfully"));
+			setSelected(new Set());
+			void fetchNodes();
+			onStatusChange?.();
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+		finally {
+			setDeleting(false);
+		}
+	}
+
+	async function handleSetMain(section: string) {
+		try {
+			const res = await setPasswallMainNode(section);
+			if (res.ok) {
+				toast.success(t("Main node updated"));
+				onStatusChange?.();
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+	}
+
+	return (
+		<div className="grid gap-4">
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<div className="flex flex-wrap items-center gap-2">
+					<div className="relative">
+						<Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+						<Input
+							placeholder={`${t("Search")}...`}
+							value={search}
+							onChange={(e) => setSearch(e.target.value)}
+							className="h-8 w-44 pl-8 text-xs sm:w-60"
+						/>
+					</div>
+					<select
+						className="h-8 rounded-md border border-input bg-transparent px-2.5 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						value={filterProtocol}
+						onChange={(e) => setFilterProtocol(e.target.value)}
+					>
+						<option value="all">{t("All")} {t("Protocol")}</option>
+						{PASSWALL_PROTOCOLS.map((p) => (
+							<option key={p.value} value={p.value}>{p.label}</option>
+						))}
+					</select>
+					<select
+						className="h-8 rounded-md border border-input bg-transparent px-2.5 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						value={filterEnabled}
+						onChange={(e) => setFilterEnabled(e.target.value)}
+					>
+						<option value="all">{t("All")} {t("Status")}</option>
+						<option value="enabled">{t("enabled")}</option>
+						<option value="disabled">{t("disabled")}</option>
+					</select>
+				</div>
+				<div className="flex items-center gap-2">
+					{selected.size > 0 && (
+						<Button
+							size="sm"
+							variant="destructive"
+							disabled={deleting}
+							onClick={() => void handleBatchDelete()}
+						>
+							{deleting ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Trash2 className="mr-1.5 size-3.5" />}
+							{t("Batch Delete")} ({selected.size})
+						</Button>
+					)}
+					<Button
+						size="sm"
+						onClick={() => {
+							setEditingNode(null);
+							setDialogOpen(true);
+						}}
+					>
+						<Plus className="mr-1.5 size-3.5" />
+						{t("Add Node")}
+					</Button>
+				</div>
+			</div>
+
+			<Panel title={`${t("Nodes")} (${filteredNodes.length})`} flush>
+				{loading ? (
+					<div className="flex items-center justify-center p-8 text-muted-foreground text-xs">
+						<Loader2 className="mr-2 size-4 animate-spin" />
+						{t("Loading...")}
+					</div>
+				) : filteredNodes.length === 0 ? (
+					<div className="p-8 text-center text-xs text-muted-foreground">
+						{t("No nodes configured.")}
+					</div>
+				) : (
+					<div className="overflow-x-auto">
+						<table className="w-full min-w-[48rem] text-left text-sm">
+							<thead className="border-b text-xs uppercase text-muted-foreground">
+								<tr>
+									<th className="px-3 py-2 w-10">
+										<input
+											type="checkbox"
+											checked={selected.size === filteredNodes.length && filteredNodes.length > 0}
+											onChange={toggleSelectAll}
+											className="rounded border-input text-primary"
+										/>
+									</th>
+									<th className="px-3 py-2 font-medium">{t("Node Name")}</th>
+									<th className="px-3 py-2 font-medium">{t("Protocol")}</th>
+									<th className="px-3 py-2 font-medium">{t("Server Address")}</th>
+									<th className="px-3 py-2 font-medium">{t("Transport Protocol")}</th>
+									<th className="px-3 py-2 font-medium">{t("TLS Encryption")}</th>
+									<th className="px-3 py-2 text-right font-medium">{t("Action")}</th>
+								</tr>
+							</thead>
+							<tbody>
+								{filteredNodes.map((node) => {
+									const isSelected = selected.has(node.section);
+									return (
+										<tr key={node.section} className={cn("border-b last:border-0 hover:bg-muted/40 transition-colors", isSelected && "bg-muted/60")}>
+											<td className="px-3 py-2">
+												<input
+													type="checkbox"
+													checked={isSelected}
+													onChange={() => toggleSelect(node.section)}
+													className="rounded border-input text-primary"
+												/>
+											</td>
+											<td className="px-3 py-2 font-medium">
+												<div className="flex items-center gap-2">
+													<span className={cn("size-2 rounded-full", node.enabled !== false ? "bg-emerald-500" : "bg-muted-foreground")} />
+													<span className="truncate max-w-[14rem]" title={node.remarks || node.section}>
+														{node.remarks || node.section}
+													</span>
+												</div>
+											</td>
+											<td className="px-3 py-2">
+												<Badge variant="outline" className="text-[10px] uppercase font-mono">
+													{node.type || "unknown"}
+												</Badge>
+											</td>
+											<td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+												{node.address ? `${node.address}:${node.port || 0}` : "—"}
+											</td>
+											<td className="px-3 py-2 text-xs capitalize text-muted-foreground">
+												{node.transport || "tcp"}
+											</td>
+											<td className="px-3 py-2 text-xs">
+												{node.tls ? (
+													<Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+														{String(node.tls)}
+													</Badge>
+												) : (
+													<span className="text-muted-foreground">—</span>
+												)}
+											</td>
+											<td className="px-3 py-2 text-right">
+												<div className="flex items-center justify-end gap-1.5">
+													<Button
+														size="sm"
+														variant="ghost"
+														className="h-7 px-2 text-xs"
+														onClick={() => void handleSetMain(node.section)}
+													>
+														{t("Set as Main Node")}
+													</Button>
+													<Button
+														size="sm"
+														variant="outline"
+														className="h-7 px-2 text-xs"
+														onClick={() => {
+															setEditingNode(node);
+															setDialogOpen(true);
+														}}
+													>
+														{t("Edit Node")}
+													</Button>
+													<Button
+														size="sm"
+														variant="ghost"
+														className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+														onClick={() => void handleDelete(node.section)}
+													>
+														<Trash2 className="size-3.5" />
+													</Button>
+												</div>
+											</td>
+										</tr>
+									);
+								})}
+							</tbody>
+						</table>
+					</div>
+				)}
+			</Panel>
+
+			{dialogOpen && (
+				<PasswallNodeDialog
+					open={dialogOpen}
+					node={editingNode}
+					onClose={() => setDialogOpen(false)}
+					onSaved={() => {
+						setDialogOpen(false);
+						void fetchNodes();
+						onStatusChange?.();
+					}}
+				/>
+			)}
+		</div>
+	);
+}
+
+function PasswallNodeDialog({
+	open,
+	node,
+	onClose,
+	onSaved,
+}: {
+	open: boolean;
+	node: PasswallNode | null;
+	onClose: () => void;
+	onSaved: () => void;
+}) {
+	const isEdit = Boolean(node?.section);
+	const [type, setType] = useState<PasswallProtocol>((node?.type as PasswallProtocol) || "vless");
+	const [remarks, setRemarks] = useState(node?.remarks || "");
+	const [address, setAddress] = useState(node?.address || "");
+	const [port, setPort] = useState(String(node?.port || 443));
+	const [enabled, setEnabled] = useState(node?.enabled !== false);
+	const [uuid, setUuid] = useState(node?.uuid || "");
+	const [password, setPassword] = useState(node?.password || "");
+	const [transport, setTransport] = useState(node?.transport || "tcp");
+	const [tls, setTls] = useState(node?.tls ? "1" : "0");
+	const [sni, setSni] = useState(node?.sni || "");
+	const [path, setPath] = useState(node?.path || "");
+	const [host, setHost] = useState(node?.host || "");
+	const [flow, setFlow] = useState(node?.flow || "");
+	const [method, setMethod] = useState(node?.method || "aes-256-gcm");
+	const [realityPk, setRealityPk] = useState(node?.reality_public_key || "");
+	const [skipCert, setSkipCert] = useState(Boolean(node?.skip_cert_verify));
+	const [username, setUsername] = useState(node?.username || "");
+	const [configPath, setConfigPath] = useState(node?.config_path || "");
+	const [saving, setSaving] = useState(false);
+
+	async function handleSubmit(e: FormEvent) {
+		e.preventDefault();
+		if (!remarks.trim() && !address.trim()) {
+			toast.error(t("Invalid configuration"));
+			return;
+		}
+
+		setSaving(true);
+		const payload: Partial<PasswallNode> = {
+			remarks,
+			type,
+			address,
+			port: parseInt(port, 10) || 443,
+			enabled,
+			uuid,
+			password,
+			transport,
+			tls: tls === "1" || tls === "reality" ? true : false,
+			sni,
+			path,
+			host,
+			flow,
+			method,
+			reality_public_key: realityPk,
+			skip_cert_verify: skipCert,
+			username,
+			config_path: configPath,
+		};
+
+		try {
+			if (isEdit && node?.section) {
+				const res = await updatePasswallNode(node.section, payload);
+				if (res.ok) {
+					toast.success(t("Node saved successfully"));
+					onSaved();
+				}
+				else {
+					toast.error(t("Operation failed"));
+				}
+			}
+			else {
+				const res = await addPasswallNode(payload);
+				if (res.ok) {
+					toast.success(t("Node saved successfully"));
+					onSaved();
+				}
+				else {
+					toast.error(t("Operation failed"));
+				}
+			}
+		}
+		catch (err) {
+			toast.error(err instanceof Error ? err.message : t("Operation failed"));
+		}
+		finally {
+			setSaving(false);
+		}
+	}
+
+	if (!open) return null;
+
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+			<div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg border bg-background p-6 shadow-lg">
+				<div className="flex items-center justify-between border-b pb-3 mb-4">
+					<h2 className="text-lg font-semibold">{isEdit ? t("Edit Node") : t("Add Node")}</h2>
+					<button type="button" onClick={onClose} className="rounded p-1 hover:bg-muted cursor-pointer">
+						<X className="size-4" />
+					</button>
+				</div>
+
+				<form onSubmit={(e) => void handleSubmit(e)} className="grid gap-4 text-xs">
+					<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("Remarks")}</label>
+							<Input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="HK-Node-01" required />
+						</div>
+
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("Protocol")}</label>
+							<select
+								className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+								value={type}
+								onChange={(e) => setType(e.target.value as PasswallProtocol)}
+							>
+								{PASSWALL_PROTOCOLS.map((p) => (
+									<option key={p.value} value={p.value}>{p.label}</option>
+								))}
+							</select>
+						</div>
+
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("Server Address")}</label>
+							<Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="example.com or 1.2.3.4" required />
+						</div>
+
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("Server Port")}</label>
+							<Input type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="443" required />
+						</div>
+					</div>
+
+					{(type === "vmess" || type === "vless" || type === "tuic") && (
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">UUID</label>
+							<Input value={uuid} onChange={(e) => setUuid(e.target.value)} placeholder="UUID / User ID" />
+						</div>
+					)}
+
+					{(type === "trojan" || type === "shadowsocks" || type === "shadowsocksr" || type === "hysteria2" || type === "tuic" || type === "naiveproxy" || type === "socks5" || type === "http") && (
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("Password")}</label>
+							<Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Secret Password" />
+						</div>
+					)}
+
+					{(type === "naiveproxy" || type === "socks5" || type === "http") && (
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("User")}</label>
+							<Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" />
+						</div>
+					)}
+
+					{type === "shadowsocks" && (
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("Encryption")}</label>
+							<select
+								className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+								value={method}
+								onChange={(e) => setMethod(e.target.value)}
+							>
+								<option value="aes-128-gcm">aes-128-gcm</option>
+								<option value="aes-256-gcm">aes-256-gcm</option>
+								<option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option>
+								<option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option>
+								<option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option>
+							</select>
+						</div>
+					)}
+
+					{(type === "vmess" || type === "vless" || type === "trojan") && (
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div className="grid gap-1.5">
+								<label className="font-medium text-foreground">{t("Transport Protocol")}</label>
+								<select
+									className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+									value={transport}
+									onChange={(e) => setTransport(e.target.value)}
+								>
+									<option value="tcp">TCP</option>
+									<option value="ws">WebSocket</option>
+									<option value="grpc">gRPC</option>
+									<option value="httpupgrade">HTTPUpgrade</option>
+								</select>
+							</div>
+
+							<div className="grid gap-1.5">
+								<label className="font-medium text-foreground">{t("TLS Encryption")}</label>
+								<select
+									className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+									value={tls}
+									onChange={(e) => setTls(e.target.value)}
+								>
+									<option value="0">{t("disabled")}</option>
+									<option value="1">TLS</option>
+									<option value="reality">Reality</option>
+								</select>
+							</div>
+						</div>
+					)}
+
+					{(tls === "1" || tls === "reality" || type === "hysteria2" || type === "tuic" || type === "naiveproxy") && (
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div className="grid gap-1.5">
+								<label className="font-medium text-foreground">{t("SNI / Domain")}</label>
+								<Input value={sni} onChange={(e) => setSni(e.target.value)} placeholder="example.com" />
+							</div>
+
+							{tls === "reality" && (
+								<div className="grid gap-1.5">
+									<label className="font-medium text-foreground">{t("Reality Public Key")}</label>
+									<Input value={realityPk} onChange={(e) => setRealityPk(e.target.value)} placeholder="Public Key" />
+								</div>
+							)}
+						</div>
+					)}
+
+					{transport === "ws" && (
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div className="grid gap-1.5">
+								<label className="font-medium text-foreground">{t("Path")}</label>
+								<Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/ws" />
+							</div>
+
+							<div className="grid gap-1.5">
+								<label className="font-medium text-foreground">Host</label>
+								<Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="example.com" />
+							</div>
+						</div>
+					)}
+
+					{type === "vless" && (
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("Flow")}</label>
+							<Input value={flow} onChange={(e) => setFlow(e.target.value)} placeholder="xtls-rprx-vision" />
+						</div>
+					)}
+
+					{type === "sing-box" && (
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">Config Path</label>
+							<Input value={configPath} onChange={(e) => setConfigPath(e.target.value)} placeholder="/etc/sing-box/config.json" />
+						</div>
+					)}
+
+					<div className="flex items-center gap-4 pt-2">
+						<label className="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={enabled}
+								onChange={(e) => setEnabled(e.target.checked)}
+								className="rounded border-input text-primary"
+							/>
+							<span className="text-foreground">{t("enabled")}</span>
+						</label>
+
+						<label className="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={skipCert}
+								onChange={(e) => setSkipCert(e.target.checked)}
+								className="rounded border-input text-primary"
+							/>
+							<span className="text-foreground">Allow Insecure / Skip Verify</span>
+						</label>
+					</div>
+
+					<div className="flex justify-end gap-2 border-t pt-4 mt-2">
+						<Button type="button" variant="outline" onClick={onClose}>
+							{t("Cancel")}
+						</Button>
+						<Button type="submit" disabled={saving}>
+							{saving ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+							{t("Save")}
+						</Button>
+					</div>
+				</form>
+			</div>
+		</div>
+	);
+}
+
+function PasswallSubscriptionsTab({ onStatusChange }: { onStatusChange?: () => void }) {
+	const [subs, setSubs] = useState<PasswallSubscription[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [updatingAll, setUpdatingAll] = useState(false);
+	const [updatingSection, setUpdatingSection] = useState<string | null>(null);
+	const [editingSub, setEditingSub] = useState<PasswallSubscription | null>(null);
+	const [dialogOpen, setDialogOpen] = useState(false);
+
+	const fetchSubs = async () => {
+		setLoading(true);
+		try {
+			const data = await getPasswallSubscriptions();
+			setSubs(data);
+		}
+		catch {
+			toast.error(t("Failed to load data"));
+		}
+		finally {
+			setLoading(false);
+		}
+	};
+
+	useEffect(() => {
+		void fetchSubs();
+	}, []);
+
+	async function handleUpdateAll() {
+		setUpdatingAll(true);
+		try {
+			const res = await triggerPasswallSubUpdate();
+			if (res.ok) {
+				toast.success(t("Subscription updated successfully"));
+				setTimeout(() => {
+					void fetchSubs();
+					onStatusChange?.();
+				}, 3000);
+			}
+			else {
+				toast.error(res.message || t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+		finally {
+			setUpdatingAll(false);
+		}
+	}
+
+	async function handleUpdateSingle(section: string) {
+		setUpdatingSection(section);
+		try {
+			const res = await triggerPasswallSubUpdate(section);
+			if (res.ok) {
+				toast.success(t("Subscription updated successfully"));
+				setTimeout(() => {
+					void fetchSubs();
+					onStatusChange?.();
+				}, 3000);
+			}
+			else {
+				toast.error(res.message || t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+		finally {
+			setUpdatingSection(null);
+		}
+	}
+
+	async function handleDelete(section: string) {
+		if (!window.confirm(t("Are you sure you want to delete this interface?"))) return;
+		try {
+			const res = await deletePasswallSubscription(section);
+			if (res.ok) {
+				toast.success(t("Node deleted successfully"));
+				void fetchSubs();
+				onStatusChange?.();
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+	}
+
+	return (
+		<div className="grid gap-4">
+			<div className="flex items-center justify-between">
+				<div className="text-sm font-medium text-muted-foreground">
+					{subs.length} {t("Subscriptions")}
+				</div>
+				<div className="flex items-center gap-2">
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={updatingAll || subs.length === 0}
+						onClick={() => void handleUpdateAll()}
+					>
+						{updatingAll ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
+						{t("Update All Subscriptions")}
+					</Button>
+					<Button
+						size="sm"
+						onClick={() => {
+							setEditingSub(null);
+							setDialogOpen(true);
+						}}
+					>
+						<Plus className="mr-1.5 size-3.5" />
+						{t("Add Subscription")}
+					</Button>
+				</div>
+			</div>
+
+			<Panel title={t("Subscriptions")} flush>
+				{loading ? (
+					<div className="flex items-center justify-center p-8 text-xs text-muted-foreground">
+						<Loader2 className="mr-2 size-4 animate-spin" />
+						{t("Loading...")}
+					</div>
+				) : subs.length === 0 ? (
+					<div className="p-8 text-center text-xs text-muted-foreground">
+						{t("No subscriptions configured.")}
+					</div>
+				) : (
+					<div className="overflow-x-auto">
+						<table className="w-full min-w-[48rem] text-left text-sm">
+							<thead className="border-b text-xs uppercase text-muted-foreground">
+								<tr>
+									<th className="px-3 py-2 font-medium">{t("Remarks")}</th>
+									<th className="px-3 py-2 font-medium">URL</th>
+									<th className="px-3 py-2 font-medium">{t("Node count")}</th>
+									<th className="px-3 py-2 font-medium">{t("Auto Update")}</th>
+									<th className="px-3 py-2 font-medium">{t("Status")}</th>
+									<th className="px-3 py-2 text-right font-medium">{t("Action")}</th>
+								</tr>
+							</thead>
+							<tbody>
+								{subs.map((sub) => {
+									const isUpdating = updatingSection === sub.section;
+									return (
+										<tr key={sub.section} className="border-b last:border-0 hover:bg-muted/40 transition-colors">
+											<td className="px-3 py-2 font-medium">{sub.remarks || sub.section}</td>
+											<td className="px-3 py-2 font-mono text-xs text-muted-foreground max-w-xs truncate" title={sub.url}>
+												{sub.url || "—"}
+											</td>
+											<td className="px-3 py-2">
+												<Badge variant="outline" className="text-xs">
+													{sub.nodeCount ?? 0} {t("Nodes")}
+												</Badge>
+											</td>
+											<td className="px-3 py-2 text-xs text-muted-foreground">
+												{sub.autoUpdate ? `${sub.autoUpdate}h` : t("disabled")}
+											</td>
+											<td className="px-3 py-2">
+												<Badge className={sub.enabled ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"}>
+													{sub.enabled ? t("enabled") : t("disabled")}
+												</Badge>
+											</td>
+											<td className="px-3 py-2 text-right">
+												<div className="flex items-center justify-end gap-1.5">
+													<Button
+														size="sm"
+														variant="outline"
+														className="h-7 px-2 text-xs"
+														disabled={isUpdating}
+														onClick={() => void handleUpdateSingle(sub.section)}
+													>
+														{isUpdating ? <Loader2 className="mr-1 size-3 animate-spin" /> : <RefreshCw className="mr-1 size-3" />}
+														{t("Update Now")}
+													</Button>
+													<Button
+														size="sm"
+														variant="outline"
+														className="h-7 px-2 text-xs"
+														onClick={() => {
+															setEditingSub(sub);
+															setDialogOpen(true);
+														}}
+													>
+														{t("Edit Subscription")}
+													</Button>
+													<Button
+														size="sm"
+														variant="ghost"
+														className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+														onClick={() => void handleDelete(sub.section)}
+													>
+														<Trash2 className="size-3.5" />
+													</Button>
+												</div>
+											</td>
+										</tr>
+									);
+								})}
+							</tbody>
+						</table>
+					</div>
+				)}
+			</Panel>
+
+			{dialogOpen && (
+				<PasswallSubscriptionDialog
+					open={dialogOpen}
+					subscription={editingSub}
+					onClose={() => setDialogOpen(false)}
+					onSaved={() => {
+						setDialogOpen(false);
+						void fetchSubs();
+						onStatusChange?.();
+					}}
+				/>
+			)}
+		</div>
+	);
+}
+
+function PasswallSubscriptionDialog({
+	open,
+	subscription,
+	onClose,
+	onSaved,
+}: {
+	open: boolean;
+	subscription: PasswallSubscription | null;
+	onClose: () => void;
+	onSaved: () => void;
+}) {
+	const isEdit = Boolean(subscription?.section);
+	const [remarks, setRemarks] = useState(subscription?.remarks || "");
+	const [url, setUrl] = useState(subscription?.url || "");
+	const [enabled, setEnabled] = useState(subscription?.enabled !== false);
+	const [autoUpdate, setAutoUpdate] = useState(String(subscription?.autoUpdate || "0"));
+	const [saving, setSaving] = useState(false);
+
+	async function handleSubmit(e: FormEvent) {
+		e.preventDefault();
+		if (!url.trim()) {
+			toast.error(t("Invalid configuration"));
+			return;
+		}
+
+		setSaving(true);
+		const payload: Partial<PasswallSubscription> = {
+			remarks: remarks.trim() || "Sub",
+			url: url.trim(),
+			enabled,
+			autoUpdate: parseInt(autoUpdate, 10) || 0,
+		};
+
+		try {
+			if (isEdit && subscription?.section) {
+				const res = await updatePasswallSubscription(subscription.section, payload);
+				if (res.ok) {
+					toast.success(t("Settings saved successfully"));
+					onSaved();
+				}
+				else {
+					toast.error(t("Operation failed"));
+				}
+			}
+			else {
+				const res = await addPasswallSubscription(payload);
+				if (res.ok) {
+					toast.success(t("Settings saved successfully"));
+					onSaved();
+				}
+				else {
+					toast.error(t("Operation failed"));
+				}
+			}
+		}
+		catch (err) {
+			toast.error(err instanceof Error ? err.message : t("Operation failed"));
+		}
+		finally {
+			setSaving(false);
+		}
+	}
+
+	if (!open) return null;
+
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+			<div className="w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg">
+				<div className="flex items-center justify-between border-b pb-3 mb-4">
+					<h2 className="text-lg font-semibold">{isEdit ? t("Edit Subscription") : t("Add Subscription")}</h2>
+					<button type="button" onClick={onClose} className="rounded p-1 hover:bg-muted cursor-pointer">
+						<X className="size-4" />
+					</button>
+				</div>
+
+				<form onSubmit={(e) => void handleSubmit(e)} className="grid gap-4 text-xs">
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Remarks")}</label>
+						<Input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Sub Provider A" />
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">URL</label>
+						<Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/api/v1/client/subscribe?token=..." required />
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Auto Update")}</label>
+						<select
+							className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+							value={autoUpdate}
+							onChange={(e) => setAutoUpdate(e.target.value)}
+						>
+							<option value="0">{t("disabled")} (Manual)</option>
+							<option value="12">12 Hours</option>
+							<option value="24">24 Hours</option>
+							<option value="48">48 Hours</option>
+						</select>
+					</div>
+
+					<div className="flex items-center gap-2 pt-2">
+						<label className="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={enabled}
+								onChange={(e) => setEnabled(e.target.checked)}
+								className="rounded border-input text-primary"
+							/>
+							<span className="text-foreground">{t("enabled")}</span>
+						</label>
+					</div>
+
+					<div className="flex justify-end gap-2 border-t pt-4 mt-2">
+						<Button type="button" variant="outline" onClick={onClose}>
+							{t("Cancel")}
+						</Button>
+						<Button type="submit" disabled={saving}>
+							{saving ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+							{t("Save")}
+						</Button>
+					</div>
+				</form>
+			</div>
+		</div>
+	);
+}
+
+function PasswallAclTab() {
+	const [rules, setRules] = useState<PasswallAclRule[]>([]);
+	const [nodes, setNodes] = useState<PasswallNode[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [editingRule, setEditingRule] = useState<PasswallAclRule | null>(null);
+	const [dialogOpen, setDialogOpen] = useState(false);
+
+	const fetchData = async () => {
+		setLoading(true);
+		try {
+			const [aclData, nodeData] = await Promise.all([
+				getPasswallAclRules(),
+				getPasswallNodes({ limit: 200 }),
+			]);
+			setRules(aclData);
+			setNodes(nodeData.nodes);
+		}
+		catch {
+			toast.error(t("Failed to load data"));
+		}
+		finally {
+			setLoading(false);
+		}
+	};
+
+	useEffect(() => {
+		void fetchData();
+	}, []);
+
+	async function handleDelete(section: string) {
+		if (!window.confirm(t("Are you sure you want to delete this interface?"))) return;
+		try {
+			const res = await deletePasswallAclRule(section);
+			if (res.ok) {
+				toast.success(t("Node deleted successfully"));
+				void fetchData();
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+	}
+
+	return (
+		<div className="grid gap-4">
+			<div className="flex items-center justify-between">
+				<div className="text-sm font-medium text-muted-foreground">
+					{rules.length} {t("Access Control")}
+				</div>
+				<Button
+					size="sm"
+					onClick={() => {
+						setEditingRule(null);
+						setDialogOpen(true);
+					}}
+				>
+					<Plus className="mr-1.5 size-3.5" />
+					{t("Add ACL Rule")}
+				</Button>
+			</div>
+
+			<Panel title={t("Access Control")} flush>
+				{loading ? (
+					<div className="flex items-center justify-center p-8 text-xs text-muted-foreground">
+						<Loader2 className="mr-2 size-4 animate-spin" />
+						{t("Loading...")}
+					</div>
+				) : rules.length === 0 ? (
+					<div className="p-8 text-center text-xs text-muted-foreground">
+						{t("No ACL rules configured.")}
+					</div>
+				) : (
+					<div className="overflow-x-auto">
+						<table className="w-full min-w-[48rem] text-left text-sm">
+							<thead className="border-b text-xs uppercase text-muted-foreground">
+								<tr>
+									<th className="px-3 py-2 font-medium">{t("Remarks")}</th>
+									<th className="px-3 py-2 font-medium">{t("Source IP / MAC")}</th>
+									<th className="px-3 py-2 font-medium">{t("Proxy Mode")}</th>
+									<th className="px-3 py-2 font-medium">{t("Main Node")}</th>
+									<th className="px-3 py-2 font-medium">{t("Status")}</th>
+									<th className="px-3 py-2 text-right font-medium">{t("Action")}</th>
+								</tr>
+							</thead>
+							<tbody>
+								{rules.map((rule) => {
+									const assignedNode = nodes.find((n) => n.section === rule.node);
+									return (
+										<tr key={rule.section} className="border-b last:border-0 hover:bg-muted/40 transition-colors">
+											<td className="px-3 py-2 font-medium">{rule.remarks || rule.section}</td>
+											<td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+												{rule.sources || "—"}
+											</td>
+											<td className="px-3 py-2 text-xs">
+												{rule.mode === "0" ? t("Global proxy") : rule.mode === "1" ? t("Direct") : t("Bypass mainland China")}
+											</td>
+											<td className="px-3 py-2 text-xs font-mono text-muted-foreground truncate max-w-xs">
+												{assignedNode?.remarks || rule.node || t("Default")}
+											</td>
+											<td className="px-3 py-2">
+												<Badge className={rule.enabled ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"}>
+													{rule.enabled ? t("enabled") : t("disabled")}
+												</Badge>
+											</td>
+											<td className="px-3 py-2 text-right">
+												<div className="flex items-center justify-end gap-1.5">
+													<Button
+														size="sm"
+														variant="outline"
+														className="h-7 px-2 text-xs"
+														onClick={() => {
+															setEditingRule(rule);
+															setDialogOpen(true);
+														}}
+													>
+														{t("Edit ACL Rule")}
+													</Button>
+													<Button
+														size="sm"
+														variant="ghost"
+														className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+														onClick={() => void handleDelete(rule.section)}
+													>
+														<Trash2 className="size-3.5" />
+													</Button>
+												</div>
+											</td>
+										</tr>
+									);
+								})}
+							</tbody>
+						</table>
+					</div>
+				)}
+			</Panel>
+
+			{dialogOpen && (
+				<PasswallAclDialog
+					open={dialogOpen}
+					rule={editingRule}
+					nodes={nodes}
+					onClose={() => setDialogOpen(false)}
+					onSaved={() => {
+						setDialogOpen(false);
+						void fetchData();
+					}}
+				/>
+			)}
+		</div>
+	);
+}
+
+function PasswallAclDialog({
+	open,
+	rule,
+	nodes,
+	onClose,
+	onSaved,
+}: {
+	open: boolean;
+	rule: PasswallAclRule | null;
+	nodes: PasswallNode[];
+	onClose: () => void;
+	onSaved: () => void;
+}) {
+	const isEdit = Boolean(rule?.section);
+	const [remarks, setRemarks] = useState(rule?.remarks || "");
+	const [sources, setSources] = useState(rule?.sources || "");
+	const [mode, setMode] = useState(rule?.mode || "4");
+	const [nodeSec, setNodeSec] = useState(rule?.node || "");
+	const [enabled, setEnabled] = useState(rule?.enabled !== false);
+	const [saving, setSaving] = useState(false);
+
+	async function handleSubmit(e: FormEvent) {
+		e.preventDefault();
+		setSaving(true);
+		const payload: Partial<PasswallAclRule> = {
+			remarks: remarks.trim(),
+			sources: sources.trim(),
+			mode,
+			node: nodeSec,
+			enabled,
+		};
+
+		try {
+			if (isEdit && rule?.section) {
+				const res = await updatePasswallAclRule(rule.section, payload);
+				if (res.ok) {
+					toast.success(t("Settings saved successfully"));
+					onSaved();
+				}
+				else {
+					toast.error(t("Operation failed"));
+				}
+			}
+			else {
+				const res = await addPasswallAclRule(payload);
+				if (res.ok) {
+					toast.success(t("Settings saved successfully"));
+					onSaved();
+				}
+				else {
+					toast.error(t("Operation failed"));
+				}
+			}
+		}
+		catch (err) {
+			toast.error(err instanceof Error ? err.message : t("Operation failed"));
+		}
+		finally {
+			setSaving(false);
+		}
+	}
+
+	if (!open) return null;
+
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+			<div className="w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg">
+				<div className="flex items-center justify-between border-b pb-3 mb-4">
+					<h2 className="text-lg font-semibold">{isEdit ? t("Edit ACL Rule") : t("Add ACL Rule")}</h2>
+					<button type="button" onClick={onClose} className="rounded p-1 hover:bg-muted cursor-pointer">
+						<X className="size-4" />
+					</button>
+				</div>
+
+				<form onSubmit={(e) => void handleSubmit(e)} className="grid gap-4 text-xs">
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Remarks")}</label>
+						<Input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="TV / Gaming Console" />
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Source IP / MAC")}</label>
+						<Input value={sources} onChange={(e) => setSources(e.target.value)} placeholder="192.168.1.100 or AA:BB:CC:DD:EE:FF" required />
+					</div>
+
+					<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("Proxy Mode")}</label>
+							<select
+								className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+								value={mode}
+								onChange={(e) => setMode(e.target.value)}
+							>
+								<option value="4">{t("Bypass mainland China")}</option>
+								<option value="0">{t("Global proxy")}</option>
+								<option value="1">{t("Direct")}</option>
+							</select>
+						</div>
+
+						<div className="grid gap-1.5">
+							<label className="font-medium text-foreground">{t("Main Node")}</label>
+							<select
+								className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+								value={nodeSec}
+								onChange={(e) => setNodeSec(e.target.value)}
+							>
+								<option value="">{t("Default")}</option>
+								{nodes.map((n) => (
+									<option key={n.section} value={n.section}>
+										{n.remarks || n.section}
+									</option>
+								))}
+							</select>
+						</div>
+					</div>
+
+					<div className="flex items-center gap-2 pt-2">
+						<label className="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={enabled}
+								onChange={(e) => setEnabled(e.target.checked)}
+								className="rounded border-input text-primary"
+							/>
+							<span className="text-foreground">{t("enabled")}</span>
+						</label>
+					</div>
+
+					<div className="flex justify-end gap-2 border-t pt-4 mt-2">
+						<Button type="button" variant="outline" onClick={onClose}>
+							{t("Cancel")}
+						</Button>
+						<Button type="submit" disabled={saving}>
+							{saving ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+							{t("Save")}
+						</Button>
+					</div>
+				</form>
+			</div>
+		</div>
+	);
+}
+
+function PasswallSettingsTab({ onSaved }: { onSaved?: () => void }) {
+	const [config, setConfig] = useState<PasswallGlobalConfig | null>(null);
+	const [nodes, setNodes] = useState<PasswallNode[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [saving, setSaving] = useState(false);
+
+	const [enable, setEnable] = useState(true);
+	const [mode, setMode] = useState("4");
+	const [socksPort, setSocksPort] = useState("1080");
+	const [tcpNode, setTcpNode] = useState("");
+	const [udpNode, setUdpNode] = useState("");
+	const [dnsMode, setDnsMode] = useState("udp");
+	const [remoteDns, setRemoteDns] = useState("8.8.8.8");
+	const [localDns, setLocalDns] = useState("223.5.5.5");
+
+	const [xrayFile, setXrayFile] = useState("/usr/bin/xray");
+	const [singBoxFile, setSingBoxFile] = useState("/usr/bin/sing-box");
+
+	const [tcpPort, setTcpPort] = useState("1041");
+	const [udpPort, setUdpPort] = useState("1041");
+
+	useEffect(() => {
+		let cancelled = false;
+		Promise.all([getPasswallGlobalConfig(), getPasswallNodes({ limit: 200 })])
+			.then(([cfg, nodeData]) => {
+				if (cancelled) return;
+				setConfig(cfg);
+				setNodes(nodeData.nodes);
+
+				const g = cfg.global || {};
+				const app = cfg.global_app || {};
+				const fwd = cfg.global_forwarding || {};
+
+				setEnable(g.enable !== "0");
+				setMode(g.mode || "4");
+				setSocksPort(g.socks_port || "1080");
+				setTcpNode(g.tcp_node || g.node || "");
+				setUdpNode(g.udp_node || "");
+				setDnsMode(g.dns_mode || "udp");
+				setRemoteDns(g.remote_dns || "8.8.8.8");
+				setLocalDns(g.local_dns || "223.5.5.5");
+
+				setXrayFile(app.xray_file || "/usr/bin/xray");
+				setSingBoxFile(app.sing_box_file || "/usr/bin/sing-box");
+
+				setTcpPort(fwd.tcp_port || "1041");
+				setUdpPort(fwd.udp_port || "1041");
+			})
+			.finally(() => {
+				if (!cancelled) setLoading(false);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	async function handleSubmit(e: FormEvent) {
+		e.preventDefault();
+		setSaving(true);
+
+		const updatedConfig: Partial<PasswallGlobalConfig> = {
+			global: {
+				...(config?.global || {}),
+				enable: enable ? "1" : "0",
+				mode,
+				socks_port: socksPort,
+				tcp_node: tcpNode,
+				node: tcpNode,
+				udp_node: udpNode,
+				dns_mode: dnsMode,
+				remote_dns: remoteDns,
+				local_dns: localDns,
+			},
+			global_app: {
+				...(config?.global_app || {}),
+				xray_file: xrayFile,
+				sing_box_file: singBoxFile,
+			},
+			global_forwarding: {
+				...(config?.global_forwarding || {}),
+				tcp_port: tcpPort,
+				udp_port: udpPort,
+			},
+		};
+
+		try {
+			const res = await updatePasswallGlobalConfig(updatedConfig);
+			if (res.ok) {
+				toast.success(t("Settings saved successfully"));
+				onSaved?.();
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (err) {
+			toast.error(err instanceof Error ? err.message : t("Operation failed"));
+		}
+		finally {
+			setSaving(false);
+		}
+	}
+
+	if (loading) {
+		return (
+			<div className="flex items-center justify-center p-12 text-xs text-muted-foreground">
+				<Loader2 className="mr-2 size-4 animate-spin" />
+				{t("Loading...")}
+			</div>
+		);
+	}
+
+	return (
+		<form onSubmit={(e) => void handleSubmit(e)} className="grid gap-5">
+			<Panel title={t("General Settings")}>
+				<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+					<div className="flex items-center gap-2 sm:col-span-2">
+						<label className="flex items-center gap-2 cursor-pointer font-medium">
+							<input
+								type="checkbox"
+								checked={enable}
+								onChange={(e) => setEnable(e.target.checked)}
+								className="rounded border-input text-primary"
+							/>
+							<span>{t("Activate passwall")}</span>
+						</label>
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Proxy Mode")}</label>
+						<select
+							className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+							value={mode}
+							onChange={(e) => setMode(e.target.value)}
+						>
+							<option value="4">{t("Bypass mainland China")}</option>
+							<option value="0">{t("Global proxy")}</option>
+							<option value="1">{t("Direct")}</option>
+						</select>
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Socks5 Port")}</label>
+						<Input value={socksPort} onChange={(e) => setSocksPort(e.target.value)} placeholder="1080" />
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Main Node")} (TCP)</label>
+						<select
+							className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+							value={tcpNode}
+							onChange={(e) => setTcpNode(e.target.value)}
+						>
+							<option value="">{t("Select node")}...</option>
+							{nodes.map((n) => (
+								<option key={n.section} value={n.section}>{n.remarks || n.section}</option>
+							))}
+						</select>
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Main Node")} (UDP)</label>
+						<select
+							className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+							value={udpNode}
+							onChange={(e) => setUdpNode(e.target.value)}
+						>
+							<option value="">{t("Default")}</option>
+							{nodes.map((n) => (
+								<option key={n.section} value={n.section}>{n.remarks || n.section}</option>
+							))}
+						</select>
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("DNS Mode")}</label>
+						<select
+							className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+							value={dnsMode}
+							onChange={(e) => setDnsMode(e.target.value)}
+						>
+							<option value="udp">UDP DNS</option>
+							<option value="tcp">TCP DNS</option>
+							<option value="doh">DNS-over-HTTPS (DoH)</option>
+							<option value="fake-ip">Fake-IP</option>
+						</select>
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Remote DNS")}</label>
+						<Input value={remoteDns} onChange={(e) => setRemoteDns(e.target.value)} placeholder="8.8.8.8" />
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("Local DNS")}</label>
+						<Input value={localDns} onChange={(e) => setLocalDns(e.target.value)} placeholder="223.5.5.5" />
+					</div>
+				</div>
+			</Panel>
+
+			<Panel title={t("Advanced Settings")}>
+				<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">Xray Executable Path</label>
+						<Input value={xrayFile} onChange={(e) => setXrayFile(e.target.value)} placeholder="/usr/bin/xray" />
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">Sing-box Executable Path</label>
+						<Input value={singBoxFile} onChange={(e) => setSingBoxFile(e.target.value)} placeholder="/usr/bin/sing-box" />
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("TCP Port")}</label>
+						<Input value={tcpPort} onChange={(e) => setTcpPort(e.target.value)} placeholder="1041" />
+					</div>
+
+					<div className="grid gap-1.5">
+						<label className="font-medium text-foreground">{t("UDP Port")}</label>
+						<Input value={udpPort} onChange={(e) => setUdpPort(e.target.value)} placeholder="1041" />
+					</div>
+				</div>
+			</Panel>
+
+			<div className="flex justify-end gap-2">
+				<Button type="submit" disabled={saving}>
+					{saving ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+					{t("Save & Apply")}
+				</Button>
+			</div>
+		</form>
+	);
+}
+
+function PasswallLogsTab() {
+	const [lines, setLines] = useState<string[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [lineLimit, setLineLimit] = useState(300);
+	const [autoScroll, setAutoScroll] = useState(true);
+	const [autoRefresh, setAutoRefresh] = useState(false);
+	const logContainerRef = useRef<HTMLDivElement>(null);
+
+	const fetchLogs = async () => {
+		try {
+			const res = await getPasswallLog(lineLimit);
+			setLines(res.lines);
+		}
+		catch {
+			// ignore
+		}
+		finally {
+			setLoading(false);
+		}
+	};
+
+	useEffect(() => {
+		void fetchLogs();
+	}, [lineLimit]);
+
+	useEffect(() => {
+		if (!autoRefresh) return;
+		const timer = window.setInterval(() => {
+			void fetchLogs();
+		}, 5000);
+		return () => window.clearInterval(timer);
+	}, [autoRefresh, lineLimit]);
+
+	useEffect(() => {
+		if (autoScroll && logContainerRef.current) {
+			logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+		}
+	}, [lines, autoScroll]);
+
+	return (
+		<div className="grid gap-4">
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<div className="flex items-center gap-2">
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={loading}
+						onClick={() => void fetchLogs()}
+					>
+						<RefreshCw className={cn("mr-1.5 size-3.5", loading && "animate-spin")} />
+						{t("Refresh")}
+					</Button>
+					<Button
+						size="sm"
+						variant="ghost"
+						onClick={() => setLines([])}
+					>
+						{t("Clear logs")}
+					</Button>
+				</div>
+				<div className="flex items-center gap-4 text-xs">
+					<label className="flex items-center gap-1.5 cursor-pointer">
+						<input
+							type="checkbox"
+							checked={autoRefresh}
+							onChange={(e) => setAutoRefresh(e.target.checked)}
+							className="rounded border-input text-primary"
+						/>
+						<span>{t("Auto Update")} (5s)</span>
+					</label>
+
+					<label className="flex items-center gap-1.5 cursor-pointer">
+						<input
+							type="checkbox"
+							checked={autoScroll}
+							onChange={(e) => setAutoScroll(e.target.checked)}
+							className="rounded border-input text-primary"
+						/>
+						<span>{t("Auto scroll")}</span>
+					</label>
+
+					<select
+						className="h-8 rounded-md border border-input bg-transparent px-2.5 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						value={lineLimit}
+						onChange={(e) => setLineLimit(Number(e.target.value))}
+					>
+						<option value="100">100 {t("lines")}</option>
+						<option value="300">300 {t("lines")}</option>
+						<option value="500">500 {t("lines")}</option>
+						<option value="1000">1000 {t("lines")}</option>
+					</select>
+				</div>
+			</div>
+
+			<Panel title={`${t("Passwall Logs")} (${lines.length} ${t("lines")})`} flush>
+				<div
+					ref={logContainerRef}
+					className="max-h-[38rem] overflow-y-auto bg-black/95 p-4 font-mono text-xs text-emerald-400 whitespace-pre-wrap leading-relaxed select-text"
+				>
+					{lines.length === 0 ? (
+						<div className="text-center text-muted-foreground py-8">
+							{loading ? t("Loading...") : "No Passwall log entries recorded."}
+						</div>
+					) : (
+						lines.map((line, idx) => (
+							<div key={idx} className="hover:bg-white/5 py-0.5 px-1 rounded-xs">
+								{line}
+							</div>
+						))
+					)}
+				</div>
+			</Panel>
+		</div>
+	);
 }
 
 function dropbearFormValues(config: ConfigSection | undefined): DropbearConfigInput {

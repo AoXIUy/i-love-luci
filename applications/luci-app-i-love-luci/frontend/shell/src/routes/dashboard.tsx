@@ -16,14 +16,20 @@ import {
 	ChevronRight,
 	Cpu,
 	HardDrive,
+	Loader2,
 	MemoryStick,
 	Network,
+	Power,
+	RefreshCw,
+	Shield,
 	Thermometer,
 	Wifi,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bar, Doughnut, Line } from "react-chartjs-2";
+import { Link } from "react-router-dom";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,14 +37,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
 	getConntrackSummary,
 	getDashboardStatus,
+	getPasswallStatus,
 	getProcessStats,
 	getThermalHistory,
+	restartPasswall,
+	togglePasswall,
 	type ConntrackSummary,
 	type DashboardStatus,
 	type DeviceStatus,
 	type DhcpLease,
 	type DiskStatEntry,
 	type NetworkInterfaceStatus,
+	type PasswallStatus,
 	type ProcessStats,
 	type ThermalHistoryResult,
 	type ThermalZone,
@@ -553,6 +563,11 @@ export function DashboardPage({ description, title = "Dashboard" }: { descriptio
 						</CardContent>
 					</Card>
 				</div>
+			</div>
+
+			{/* Passwall 代理墙卡片 (10s 刷新) */}
+			<div className="grid gap-5">
+				<PasswallStatusCard />
 			</div>
 
 			{/* 进程 CPU / 内存实时趋势面板 (10s 刷新) */}
@@ -1152,6 +1167,210 @@ function ConnectionsPanel() {
 						</div>
 					</div>
 				)}
+			</CardContent>
+		</CollapsibleCard>
+	);
+}
+
+// ─── 1.5 Passwall 代理墙状态卡片 (PasswallStatusCard - 10s 刷新) ────────────────
+
+function PasswallStatusCard() {
+	const [status, setStatus] = useState<PasswallStatus | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [toggling, setToggling] = useState(false);
+	const [restarting, setRestarting] = useState(false);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		async function fetchStatus() {
+			try {
+				const data = await getPasswallStatus();
+				if (!cancelled) {
+					setStatus(data);
+					setLoading(false);
+				}
+			}
+			catch {
+				if (!cancelled) {
+					setLoading(false);
+				}
+			}
+		}
+
+		void fetchStatus();
+		const interval = window.setInterval(() => {
+			void fetchStatus();
+		}, 10000);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(interval);
+		};
+	}, []);
+
+	async function handleToggle() {
+		if (!status) return;
+		const nextState = !status.enabled;
+		setToggling(true);
+		try {
+			const res = await togglePasswall(nextState);
+			if (res.ok) {
+				toast.success(nextState ? t("Activate passwall") : t("Deactivate passwall"));
+				const updated = await getPasswallStatus();
+				setStatus(updated);
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+		finally {
+			setToggling(false);
+		}
+	}
+
+	async function handleRestart() {
+		setRestarting(true);
+		try {
+			const res = await restartPasswall();
+			if (res.ok) {
+				toast.success(t("Passwall restarted"));
+				const updated = await getPasswallStatus();
+				setStatus(updated);
+			}
+			else {
+				toast.error(t("Operation failed"));
+			}
+		}
+		catch (e) {
+			toast.error(e instanceof Error ? e.message : t("Operation failed"));
+		}
+		finally {
+			setRestarting(false);
+		}
+	}
+
+	if (!loading && (!status || status.installed === false)) {
+		return null;
+	}
+
+	const isRunning = Boolean(status?.running && status?.enabled);
+	const modeLabel = status?.mode === "0" ? t("Global proxy") : status?.mode === "1" ? t("Direct") : t("Bypass mainland China");
+
+	return (
+		<CollapsibleCard
+			id="passwall-status"
+			title={
+				<div className="flex items-center gap-2">
+					<Shield className="size-4 text-primary" />
+					<span>{t("Passwall")}</span>
+				</div>
+			}
+			badge={
+				loading ? (
+					<Badge variant="outline" className="text-xs">
+						<Loader2 className="mr-1 size-3 animate-spin" />
+						{t("Loading...")}
+					</Badge>
+				) : (
+					<Badge className={isRunning ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium border-emerald-500/20" : "bg-muted text-muted-foreground"}>
+						<span className={cn("mr-1.5 size-1.5 rounded-full inline-block", isRunning ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground")} />
+						{isRunning ? t("Running") : status?.enabled ? t("Stopped") : t("Disabled")}
+					</Badge>
+				)
+			}
+			extraHeader={
+				<span className="text-xs text-muted-foreground hidden sm:inline">
+					{t("Refreshes every 10s")}
+				</span>
+			}
+		>
+			<CardContent className="p-4 sm:p-6 grid gap-5">
+				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+					{/* 当前主节点 */}
+					<div className="rounded-lg border bg-card p-3.5 shadow-xs flex flex-col justify-between">
+						<div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+							<span>{t("Main Node")}</span>
+							{status?.mainNode?.type && (
+								<Badge variant="outline" className="text-[10px] uppercase font-mono px-1.5 py-0">
+									{status.mainNode.type}
+								</Badge>
+							)}
+						</div>
+						<div className="font-semibold text-sm truncate" title={status?.mainNode?.remarks || t("None")}>
+							{status?.mainNode?.remarks || t("None")}
+						</div>
+						<div className="text-xs font-mono text-muted-foreground truncate mt-1">
+							{status?.mainNode?.address ? `${status.mainNode.address}:${status.mainNode.port}` : "—"}
+						</div>
+					</div>
+
+					{/* 代理核心 */}
+					<div className="rounded-lg border bg-card p-3.5 shadow-xs flex flex-col justify-between">
+						<div className="text-xs text-muted-foreground mb-1">{t("Core Type")}</div>
+						<div className="font-semibold text-sm flex items-center gap-1.5">
+							<span className="capitalize">{status?.coreType || "Xray"}</span>
+							{status?.coreVersion && (
+								<span className="text-xs font-mono text-muted-foreground">v{status.coreVersion}</span>
+							)}
+						</div>
+						<div className="text-xs text-muted-foreground mt-1">
+							{status?.pid ? `${t("PID")}: ${status.pid}` : t("Idle")}
+						</div>
+					</div>
+
+					{/* 代理模式 */}
+					<div className="rounded-lg border bg-card p-3.5 shadow-xs flex flex-col justify-between">
+						<div className="text-xs text-muted-foreground mb-1">{t("Proxy Mode")}</div>
+						<div className="font-semibold text-sm">{modeLabel}</div>
+						<div className="text-xs text-muted-foreground mt-1">
+							{status?.enabled ? t("Active") : t("Inactive")}
+						</div>
+					</div>
+
+					{/* 节点与订阅统计 */}
+					<div className="rounded-lg border bg-card p-3.5 shadow-xs flex flex-col justify-between">
+						<div className="text-xs text-muted-foreground mb-1">{t("Stats")}</div>
+						<div className="font-semibold text-sm">
+							{status?.nodeCount ?? 0} {t("Nodes")} · {status?.subscriptionCount ?? 0} {t("Subscriptions")}
+						</div>
+						<div className="text-xs text-muted-foreground mt-1">
+							{status?.subscriptionCount ? `${status.subscriptionCount} ${t("active sources")}` : t("No subscriptions")}
+						</div>
+					</div>
+				</div>
+
+				<div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t">
+					<div className="flex items-center gap-2">
+						<Button
+							size="sm"
+							variant={status?.enabled ? "outline" : "default"}
+							disabled={toggling || loading}
+							onClick={() => void handleToggle()}
+						>
+							{toggling ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Power className="mr-1.5 size-3.5" />}
+							{status?.enabled ? t("Deactivate passwall") : t("Activate passwall")}
+						</Button>
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={restarting || loading || !status?.enabled}
+							onClick={() => void handleRestart()}
+						>
+							{restarting ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
+							{t("Restart")}
+						</Button>
+					</div>
+					<Button asChild size="sm" variant="secondary">
+						<Link to="/native/service/passwall/nodes">
+							{t("Manage Nodes")}
+							<ChevronRight className="ml-1 size-3.5" />
+						</Link>
+					</Button>
+				</div>
 			</CardContent>
 		</CollapsibleCard>
 	);

@@ -30,12 +30,20 @@
 					"changes_list",
 					"console_poll",
 					"console_status",
-					"auth_mfa_status"
+					"auth_mfa_status",
+					"passwall_status",
+					"passwall_list_nodes",
+					"passwall_node_detail",
+					"passwall_list_subscriptions",
+					"passwall_get_log",
+					"passwall_list_acl",
+					"passwall_get_config"
 				]
 			},
 			"uci": [
 				"luci",
-				"i-love-luci"
+				"i-love-luci",
+				"passwall"
 			]
 		},
 		"write": {
@@ -95,6 +103,20 @@
 					"package_file_stage",
 					"package_job_start",
 					"package_feeds_save",
+					"passwall_update_node",
+					"passwall_delete_node",
+					"passwall_add_node",
+					"passwall_update_subscription",
+					"passwall_delete_subscription",
+					"passwall_add_subscription",
+					"passwall_update_sub",
+					"passwall_set_main_node",
+					"passwall_toggle",
+					"passwall_restart",
+					"passwall_update_acl",
+					"passwall_delete_acl",
+					"passwall_add_acl",
+					"passwall_update_config",
 					"rc_local_save",
 					"reboot_confirm",
 					"restore_backup_apply",
@@ -125,6 +147,7 @@
 				"luci",
 				"i-love-luci",
 				"network",
+				"passwall",
 				"system",
 				"uhttpd",
 				"upnpd"
