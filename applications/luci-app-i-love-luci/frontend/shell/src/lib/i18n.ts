@@ -489,7 +489,6 @@ const dict: Record<string, string> = {
 	"Operation failed": "操作执行失败",
 	"All": "全部",
 	"Idle": "空闲",
-	"Default": "默认",
 	"lines": "行",
 	"Stats": "统计信息",
 	"active sources": "个订阅源",

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { t } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 import { legacyTarget, nativePageCompatPath, serviceCompatPath } from "@/lib/service-compat";
 import {
 	applyFactoryReset,

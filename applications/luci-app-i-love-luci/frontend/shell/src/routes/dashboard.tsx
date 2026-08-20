@@ -1263,12 +1263,7 @@ function PasswallStatusCard() {
 	return (
 		<CollapsibleCard
 			id="passwall-status"
-			title={
-				<div className="flex items-center gap-2">
-					<Shield className="size-4 text-primary" />
-					<span>{t("Passwall")}</span>
-				</div>
-			}
+			title={t("Passwall")}
 			badge={
 				loading ? (
 					<Badge variant="outline" className="text-xs">
@@ -1364,12 +1359,13 @@ function PasswallStatusCard() {
 							{t("Restart")}
 						</Button>
 					</div>
-					<Button asChild size="sm" variant="secondary">
-						<Link to="/native/service/passwall/nodes">
-							{t("Manage Nodes")}
-							<ChevronRight className="ml-1 size-3.5" />
-						</Link>
-					</Button>
+					<Link
+						to="/native/service/passwall/nodes"
+						className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
+					>
+						{t("Manage Nodes")}
+						<ChevronRight className="size-3.5" />
+					</Link>
 				</div>
 			</CardContent>
 		</CollapsibleCard>
